@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Aegis — Trust Mesh Console</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #121821;
+    --panel-2: #161e29;
+    --border: #263140;
+    --text: #e6edf3;
+    --text-dim: #8b98a5;
+    --accent: #4f8cff;
+    --allow: #2ea043;
+    --deny: #e5484d;
+    --escalate: #d29922;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: 0.3px; }
+  header h1 span { color: var(--text-dim); font-weight: 400; }
+  #principalBadge { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 12px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+  button.danger { background: var(--deny); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  input, select, textarea {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 5px;
+    padding: 6px 8px;
+    font-size: 13px;
+    width: 100%;
+  }
+  label { font-size: 11px; color: var(--text-dim); display: block; margin: 8px 0 3px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .panel h2 { font-size: 13px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
+  #authScreen {
+    max-width: 420px;
+    margin: 80px auto;
+  }
+  #app { display: none; }
+  .grid {
+    display: grid;
+    grid-template-columns: 340px 1fr 380px;
+    gap: 14px;
+    padding: 14px;
+    align-items: start;
+  }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .agentNode {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin: 6px 0;
+    background: var(--panel-2);
+    cursor: pointer;
+  }
+  .agentNode.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .agentNode .id { font-family: var(--mono); font-size: 12px; font-weight: 600; }
+  .agentNode .goal { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  .agentNode .caveats { font-size: 10px; color: var(--text-dim); margin-top: 4px; font-family: var(--mono); }
+  .agentNode .actions { margin-top: 6px; display: flex; gap: 6px; }
+  .agentNode .actions button { padding: 3px 8px; font-size: 11px; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .badge.allow { background: rgba(46,160,67,0.18); color: var(--allow); }
+  .badge.deny { background: rgba(229,72,77,0.18); color: var(--deny); }
+  .badge.escalate { background: rgba(210,153,34,0.18); color: var(--escalate); }
+  .badge.gray { background: rgba(139,152,165,0.18); color: var(--text-dim); }
+  #feed { display: flex; flex-direction: column-reverse; gap: 8px; max-height: 480px; overflow-y: auto; }
+  .card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: var(--panel-2);
+    font-size: 12px;
+  }
+  .card .top { display: flex; justify-content: space-between; align-items: center; }
+  .card .kind { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+  .card .time { font-size: 10px; color: var(--text-dim); }
+  .card .body { margin-top: 6px; color: var(--text-dim); font-size: 11px; line-height: 1.5; }
+  .card .body b { color: var(--text); }
+  #result { margin-top: 10px; }
+  #chainStatus { font-size: 12px; margin-bottom: 8px; }
+  #chainStatus.valid { color: var(--allow); }
+  #chainStatus.invalid { color: var(--deny); }
+  .hash { font-family: var(--mono); font-size: 10px; color: var(--text-dim); word-break: break-all; }
+  .stack { display: flex; flex-direction: column; gap: 14px; }
+  .error { color: var(--deny); font-size: 12px; margin-top: 8px; }
+  .hint { font-size: 11px; color: var(--text-dim); margin-top: 6px; }
+  a.link { color: var(--accent); cursor: pointer; }
+  #ledgerEntries { max-height: 260px; overflow-y: auto; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>AEGIS <span>— Trust Mesh Console</span></h1>
+  <div id="principalBadge"></div>
+</header>
+
+<div id="authScreen" class="panel">
+  <h2>Sign in</h2>
+  <label>Principal ID (new)</label>
+  <input id="newPrincipalId" placeholder="acme-corp" />
+  <div class="row" style="margin-top:8px">
+    <button id="createPrincipalBtn">Create principal</button>
+  </div>
+  <p class="hint">Creates a new principal and issues an API key — shown once, saved to this browser only.</p>
+  <hr style="border-color: var(--border); margin: 14px 0" />
+  <label>Existing API key</label>
+  <input id="existingApiKey" placeholder="paste an existing principal API key" />
+  <div class="row" style="margin-top:8px">
+    <button id="useExistingKeyBtn" class="secondary">Use this key</button>
+  </div>
+  <div id="authError" class="error"></div>
+</div>
+
+<div id="app">
+  <div class="grid">
+
+    <div class="stack">
+      <div class="panel">
+        <h2>Agents</h2>
+        <div id="agentTree"></div>
+        <hr style="border-color: var(--border); margin: 12px 0" />
+        <div id="createAgentForm">
+          <div class="hint" id="createAgentContext">Creating a root agent.</div>
+          <label>Agent ID</label>
+          <input id="agentId" placeholder="agent-flights" />
+          <label>Delegated goal</label>
+          <textarea id="delegatedGoal" rows="2" placeholder="Book the cheapest flights for Q3 conferences"></textarea>
+          <label>Max amount (USD)</label>
+          <input id="maxAmount" type="number" value="2000" />
+          <label>Categories (comma-separated)</label>
+          <input id="categories" value="flights,hotels,software" />
+          <label>Rails</label>
+          <div class="row">
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text)"><input type="checkbox" id="railStripe" checked style="width:auto" /> stripe_test</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text)"><input type="checkbox" id="railX402" checked style="width:auto" /> mock_x402</label>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <button id="createAgentBtn">Create</button>
+            <button id="cancelAttenuateBtn" class="secondary" style="display:none">Cancel</button>
+          </div>
+          <div id="agentError" class="error"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="stack">
+      <div class="panel">
+        <h2>Submit transaction — <span id="activeAgentLabel" style="color: var(--text); text-transform: none">none selected</span></h2>
+        <div class="row">
+          <div>
+            <label>Amount (USD)</label>
+            <input id="txAmount" type="number" value="380" />
+          </div>
+          <div>
+            <label>Currency</label>
+            <input id="txCurrency" value="USD" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Category</label>
+            <input id="txCategory" value="flights" />
+          </div>
+          <div>
+            <label>Rail</label>
+            <select id="txRail">
+              <option value="stripe_test">stripe_test</option>
+              <option value="mock_x402">mock_x402</option>
+            </select>
+          </div>
+        </div>
+        <label>Counterparty</label>
+        <input id="txCounterparty" value="acme-airlines" />
+        <label>Purpose</label>
+        <textarea id="txPurpose" rows="2">Round-trip flight for the Q3 vendor conference</textarea>
+        <div class="row" style="margin-top:10px">
+          <button id="simulateBtn" class="secondary">Simulate</button>
+          <button id="executeBtn">Execute</button>
+        </div>
+        <div id="result"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Delegation graph</h2>
+        <div id="graphView" class="hint">Select an agent to view its tree.</div>
+      </div>
+    </div>
+
+    <div class="stack">
+      <div class="panel">
+        <h2>Live decision feed</h2>
+        <div id="feed"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Audit ledger</h2>
+        <div id="chainStatus">—</div>
+        <button id="refreshLedgerBtn" class="secondary">Refresh</button>
+        <div id="ledgerEntries"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
