@@ -17,6 +17,7 @@ let state = {
   attenuateParentId: null, // null => next "Create" targets a root agent
   missions: [],
   viewingMissionId: null,
+  viewingMission: null, // the full mission object last fetched by viewMissionDetail(), or null — read by renderAuthorityFlow() to extend the flow with the mission's budget, only when it belongs to the active agent.
 };
 
 // ---------- helpers ----------
@@ -304,37 +305,99 @@ async function revokeAgent(agentId) {
 
 async function selectAgent(agentId) {
   state.activeAgentId = agentId;
+  state.viewingMissionId = null;
+  state.viewingMission = null;
   document.getElementById("activeAgentLabel").textContent = agentId;
   renderAgentTree();
   populateTxMissionSelect();
-  try {
-    const graph = await api(`/agents/${agentId}/graph`, { auth: state.apiKey });
-    renderGraph(graph);
-  } catch {
-    /* non-fatal */
-  }
+  renderAuthorityFlow();
 }
 
-function renderGraph(graph) {
+// ---------- authority flow (Step "Day 1, Block 1") ----------
+// A first-class visualization of the one idea the rest of the dashboard only implies:
+// authority narrows at every level and never widens. Built entirely from data already
+// held in `state` (agent caveats + parent links already come back on every /agents
+// list, and the last mission fetched by viewMissionDetail()) — no new API calls.
+// Reuses the exact chain/tagline visual vocabulary already proven in the Scenario B/D
+// attack-theatre panel (.chainFlow/.chainNode/.chainArrow/.narrowTagline), so this adds
+// no new colors, no new motion, no new visual language — only a new place it appears.
+
+/** Root-to-selected-agent lineage, built from state.agents' own parentAgentId links — never re-fetched. */
+function authorityLineage(agentId) {
+  const byId = new Map(state.agents.map((a) => [a.agentId, a]));
+  const lineage = [];
+  let current = byId.get(agentId);
+  while (current) {
+    lineage.unshift(current);
+    current = current.parentAgentId ? byId.get(current.parentAgentId) : undefined;
+  }
+  return lineage;
+}
+
+/** `heroId`, when true, renders idText at the hero type scale (Day 1, Block 2) — used only for the LIVE BUDGET stage's headline figure, the single most important number in the flow. Every other stage keeps its existing, unchanged size. */
+function authorityStage(role, idText, detailText, heroId) {
+  const node = el("div", { class: "chainNode" });
+  node.appendChild(
+    el("div", { class: "chainTop" }, [el("span", { class: "chainRole", text: role })])
+  );
+  node.appendChild(el("div", { class: heroId ? "heroLine" : "chainId", text: idText }));
+  node.appendChild(el("div", { class: "chainCaveats", text: detailText }));
+  return node;
+}
+
+function renderAuthorityFlow() {
   const container = document.getElementById("graphView");
   container.innerHTML = "";
-  const byParent = new Map();
-  for (const a of graph.agents) {
-    const key = a.parentAgentId || "__root__";
-    if (!byParent.has(key)) byParent.set(key, []);
-    byParent.get(key).push(a);
+
+  if (!state.activeAgentId) {
+    container.appendChild(el("div", { class: "hint", text: "Select an agent to see how far its authority reaches — and where it narrows." }));
+    return;
   }
-  function renderLevel(parentKey, depth) {
-    const children = byParent.get(parentKey) || [];
-    return children.map((a) => {
-      const row = el("div", { text: `${"  ".repeat(depth)}${depth > 0 ? "└─ " : ""}${a.agentId}` });
-      row.style.fontFamily = "var(--mono)";
-      row.style.fontSize = "12px";
-      row.style.color = a.agentId === state.activeAgentId ? "var(--accent)" : "var(--text)";
-      return [row, ...renderLevel(a.agentId, depth + 1)];
-    }).flat();
+
+  const lineage = authorityLineage(state.activeAgentId);
+  if (lineage.length === 0) {
+    container.appendChild(el("div", { class: "hint", text: "Loading…" }));
+    return;
   }
-  renderLevel("__root__", 0).forEach((n) => container.appendChild(n));
+
+  const flow = el("div", { class: "chainFlow" });
+  lineage.forEach((agent, i) => {
+    if (i > 0) flow.appendChild(el("div", { class: "chainArrow", text: "↓" }));
+    const role = i === 0 ? "AGENT AUTHORITY" : "DELEGATED (ATTENUATED)";
+    const idText = agent.agentId + (agent.agentId === state.activeAgentId && lineage.length > 1 ? " (selected)" : "");
+    const detail = `cap ${fmtMoney(agent.caveats.maxAmountMinorUnits, agent.caveats.currency)} · ${agent.caveats.categories.join(",")} · ${agent.caveats.rails.join(",")}`;
+    flow.appendChild(authorityStage(role, idText, detail));
+  });
+
+  const mission = state.viewingMission;
+  if (mission && mission.agentId === state.activeAgentId) {
+    flow.appendChild(el("div", { class: "chainArrow", text: "↓" }));
+    flow.appendChild(
+      authorityStage(
+        "MISSION BOUNDARY",
+        mission.missionId,
+        `budget ${fmtMoney(mission.budgetMinorUnits, mission.currency)} · ${mission.allowedCategories ? mission.allowedCategories.join(",") : "(same as agent token)"} · ${mission.approvedCounterparties ? mission.approvedCounterparties.join(",") : "(unrestricted)"}`
+      )
+    );
+    flow.appendChild(el("div", { class: "chainArrow", text: "↓" }));
+    flow.appendChild(
+      authorityStage(
+        "LIVE BUDGET",
+        `${fmtMoney(mission.remainingMinorUnits, mission.currency)} remaining`,
+        `spent ${fmtMoney(mission.spentMinorUnits, mission.currency)} · reserved ${fmtMoney(mission.reservedMinorUnits, mission.currency)} · of ${fmtMoney(mission.budgetMinorUnits, mission.currency)} budget`,
+        true
+      )
+    );
+  }
+
+  container.appendChild(flow);
+  container.appendChild(
+    el("div", { class: "narrowTagline" }, [
+      el("span", { class: "can", text: "AUTHORITY CAN NARROW" }),
+      document.createTextNode(" · "),
+      el("span", { class: "cannot", text: "AUTHORITY CANNOT WIDEN" }),
+    ])
+  );
 }
 
 // ---------- transactions ----------
@@ -698,6 +761,8 @@ async function viewMissionDetail(missionId) {
     const mission = await api(`/missions/${encodeURIComponent(missionId)}`, { auth: state.apiKey });
     const ledgerRes = await api(`/ledger?agentId=${encodeURIComponent(mission.agentId)}`, { auth: state.apiKey });
     renderMissionDetail(mission, ledgerRes.entries);
+    state.viewingMission = mission;
+    renderAuthorityFlow();
   } catch (err) {
     renderError(container, err.message);
   }
@@ -710,10 +775,15 @@ function renderMissionDetail(mission, ledgerEntries) {
   container.appendChild(el("h3", { text: mission.missionId }));
   container.appendChild(el("div", { class: "top" }, [el("span", { class: `badge ${statusBadgeClass(mission.status)}`, text: mission.status })]));
   container.appendChild(el("div", { class: "goal", text: mission.goal, style: "margin:8px 0" }));
+  // Hero treatment (Block 3B) for the one figure that matters most here — the SAME
+  // .heroLine class and "$X remaining" / "spent Y · reserved Z · of W budget" phrasing
+  // Authority Flow's LIVE BUDGET stage already uses (see authorityStage() above), not
+  // a new component or new wording.
+  container.appendChild(el("div", { class: "heroLine", text: `${fmtMoney(mission.remainingMinorUnits, mission.currency)} remaining` }));
   container.appendChild(
-    el("div", { class: "hint" }, [
+    el("div", { class: "hint", style: "margin-top:2px" }, [
       document.createTextNode(
-        `budget ${fmtMoney(mission.budgetMinorUnits, mission.currency)} · spent ${fmtMoney(mission.spentMinorUnits, mission.currency)} · reserved ${fmtMoney(mission.reservedMinorUnits, mission.currency)} · remaining ${fmtMoney(mission.remainingMinorUnits, mission.currency)}`
+        `spent ${fmtMoney(mission.spentMinorUnits, mission.currency)} · reserved ${fmtMoney(mission.reservedMinorUnits, mission.currency)} · of ${fmtMoney(mission.budgetMinorUnits, mission.currency)} budget`
       ),
     ])
   );
@@ -946,6 +1016,106 @@ function attackUpdateStats(counters) {
   document.getElementById("attackStatSpend").textContent = fmtMoney(counters.spendMinorUnits, "USD");
 }
 
+// ---------- attack theatre pipeline trace (Block 3A) ----------
+// Traces ONE real attempt's actual recorded response through the real pipeline,
+// stage by stage, stopping exactly where that attempt's own response says it
+// stopped — never a second, simulated attempt, never an assumed outcome. Reuses
+// pipelineStage() (the same "stage" component already used for Simulate/Execute
+// results and mission history — see renderDecisionResult() above) and
+// .chainFlow/.chainArrow (already used for the revocation chain) — no new CSS, no
+// new visual language.
+//
+// Real pipeline order note: the requested labeling was ATTACK -> CAPABILITY ->
+// MISSION -> BUDGET -> DECISION -> EXECUTION -> LEDGER. The ACTUAL order, per
+// src/api/routes/transactions.ts's runMissionPreflight, is: the mission gate
+// (category/counterparty + atomic budget reservation) runs FIRST, entirely before
+// capability verification, the risk engine, the decision, or execution ever start —
+// a mission-gate denial means none of those later stages genuinely ran. This trace
+// follows the real order, not the requested label order, because rendering a false
+// sequence would itself be exactly the kind of "pretending later stages executed"
+// this component exists to avoid. Mission+budget are shown as one stage (they are
+// checked together, atomically, in one function call — splitting them would imply a
+// false granularity); capability+policy are likewise shown as one stage, matching
+// the exact "Capability & Policy" label pipelineStage() already uses elsewhere in
+// this file for the identical real check.
+
+/** Prefers a genuinely BLOCKED attempt — the actual point of this component is showing exactly where an attack is stopped, not just where it succeeds. Falls back to a real allowed attempt only if nothing was blocked. Never fabricates a record. */
+function pickRepresentativeAttempt(records) {
+  const blocked = records.find((r) => r && r.ok && r.response.decision && r.response.decision.verdict !== "allow");
+  if (blocked) return blocked;
+  const errored = records.find((r) => r && !r.ok);
+  if (errored) return errored;
+  return records.find((r) => r && r.ok) || null;
+}
+
+function buildAttackTraceStages(record, txInput) {
+  const stages = [];
+  stages.push(
+    pipelineStage("Attack attempt", "gray", [
+      document.createTextNode(`${fmtMoney(txInput.amountMinorUnits, txInput.currency)} · ${txInput.category} · ${txInput.counterparty}`),
+    ])
+  );
+  if (!record) return stages;
+
+  if (!record.ok) {
+    stages.push(el("div", { class: "chainArrow", text: "↓" }));
+    stages.push(pipelineStage("Request", "deny", [document.createTextNode(record.error)]));
+    return stages;
+  }
+
+  const decision = record.response.decision;
+  stages.push(el("div", { class: "chainArrow", text: "↓" }));
+  if (decision.source === "mission") {
+    stages.push(pipelineStage("Mission & budget gate", "deny", [document.createTextNode(decision.reason)]));
+    return stages; // capability/risk/decision/execution genuinely never ran
+  }
+  stages.push(pipelineStage("Mission & budget gate", "allow", [document.createTextNode("Gate passed — budget reserved for this attempt")]));
+
+  const policy = decision.policy;
+  stages.push(el("div", { class: "chainArrow", text: "↓" }));
+  stages.push(
+    pipelineStage("Capability & policy", policy && policy.allowed ? "allow" : "deny", [
+      document.createTextNode((policy && policy.reason) || (policy && policy.allowed ? "All capability-token caveats satisfied" : decision.reason)),
+    ])
+  );
+  if (!policy || !policy.allowed) return stages;
+
+  if (decision.risk) {
+    const risk = decision.risk;
+    const riskOk = risk.intentJudgment.verdict === "consistent" && risk.baselineFlags.length === 0;
+    stages.push(el("div", { class: "chainArrow", text: "↓" }));
+    stages.push(pipelineStage("Risk (intent + behavioral)", riskOk ? "allow" : "escalate", [document.createTextNode(`Intent: ${risk.intentJudgment.verdict}`)]));
+  }
+
+  stages.push(el("div", { class: "chainArrow", text: "↓" }));
+  stages.push(pipelineStage("Decision", decision.verdict, [document.createTextNode(decision.reason)]));
+  if (decision.verdict !== "allow") return stages;
+
+  const execution = record.response.execution;
+  stages.push(el("div", { class: "chainArrow", text: "↓" }));
+  stages.push(
+    pipelineStage("Execution", execution && execution.success ? "allow" : "deny", [
+      document.createTextNode(execution ? (execution.success ? `Settled on ${execution.rail} — ${execution.reference}` : `Failed: ${execution.error}`) : "(no execution result)"),
+    ])
+  );
+  if (!execution || !execution.success) return stages;
+
+  stages.push(el("div", { class: "chainArrow", text: "↓" }));
+  stages.push(pipelineStage("Ledger", "allow", [document.createTextNode("Recorded — hash-chained and signed")]));
+  return stages;
+}
+
+function renderAttackTrace(records, txInput) {
+  const container = document.getElementById("attackTrace");
+  if (!container) return;
+  container.innerHTML = "";
+  const record = pickRepresentativeAttempt(records);
+  container.appendChild(el("div", { class: "stageLabel", text: "Representative attempt — traced stage by stage", style: "margin-bottom:6px" }));
+  const flow = el("div", { class: "chainFlow" });
+  for (const node of buildAttackTraceStages(record, txInput)) flow.appendChild(node);
+  container.appendChild(flow);
+}
+
 async function launchBudgetAttack() {
   const infoEl = document.getElementById("attackMissionInfo");
   const summaryEl = document.getElementById("attackSummary");
@@ -974,6 +1144,12 @@ async function launchBudgetAttack() {
 
   const rows = [];
   const statusSpans = [];
+  // One slot per attempt, filled in by fireOne() below with exactly what that
+  // attempt's real response contained (or the real error, if the request itself
+  // failed) — this is the only data source the pipeline trace (rendered after the
+  // burst completes) is ever allowed to read from. Never fabricated, never a
+  // client-side guess at what "should" have happened.
+  const attemptRecords = new Array(ATTACK_ATTEMPT_COUNT).fill(null);
   for (let i = 0; i < ATTACK_ATTEMPT_COUNT; i++) {
     const statusSpan = el("span", { class: "attemptStatus", text: "pending…" });
     const row = el("div", { class: "attemptRow pending" }, [el("span", { text: `#${i + 1}` }), statusSpan]);
@@ -998,6 +1174,7 @@ async function launchBudgetAttack() {
           missionId: attackMissionId,
         },
       });
+      attemptRecords[i] = { ok: true, response: res };
       allowed = Boolean(res.decision && res.decision.verdict === "allow");
       // Only a genuine settlement (execution.success) counts toward "spend" — a
       // decision-layer "allow" whose rail call then failed spent nothing, exactly as
@@ -1011,6 +1188,7 @@ async function launchBudgetAttack() {
         counters.blocked++;
       }
     } catch (err) {
+      attemptRecords[i] = { ok: false, error: err.message };
       statusText = "ERROR";
       counters.blocked++;
     }
@@ -1021,6 +1199,8 @@ async function launchBudgetAttack() {
 
   await Promise.all(Array.from({ length: ATTACK_ATTEMPT_COUNT }, (_, i) => fireOne(i)));
 
+  renderAttackTrace(attemptRecords, { amountMinorUnits: ATTACK_AMOUNT_MINOR_UNITS, currency: "USD", category, counterparty });
+
   // The counters above are a live, client-side tally of what each real response said —
   // this final check independently re-fetches the mission's own authoritative,
   // server-computed state (spentMinorUnits is derived entirely from the ledger, per
@@ -1029,11 +1209,22 @@ async function launchBudgetAttack() {
   try {
     const mission = await api(`/missions/${encodeURIComponent(attackMissionId)}`, { auth: state.apiKey });
     const overspend = Math.max(0, mission.spentMinorUnits - mission.budgetMinorUnits);
-    verifiedEl.textContent =
+    const detail =
       `Server-confirmed: spent ${fmtMoney(mission.spentMinorUnits, mission.currency)} of ${fmtMoney(mission.budgetMinorUnits, mission.currency)} budget ` +
       `— remaining ${fmtMoney(mission.remainingMinorUnits, mission.currency)} — overspend ${fmtMoney(overspend, mission.currency)}.`;
+    // Moment-of-truth treatment (Day 1, Block 2) — the SAME .integrityBig box the
+    // ledger panel already uses, not a new component. overspend is independently
+    // recomputed above from the server's own authoritative figures, never assumed
+    // to be zero — if the atomic reservation invariant ever genuinely failed, this
+    // would honestly render "OVERSPEND DETECTED" in red, not silently stay green.
+    verifiedEl.innerHTML = "";
+    const cls = overspend === 0 ? "valid" : "invalid";
+    const headline = overspend === 0 ? "✓ ZERO OVERSPEND — BUDGET HELD" : "✗ OVERSPEND DETECTED";
+    verifiedEl.appendChild(el("div", { class: `integrityBig ${cls}` }, [document.createTextNode(headline)]));
+    verifiedEl.appendChild(el("div", { class: "hint", text: detail, style: "margin-top:6px" }));
   } catch (err) {
-    verifiedEl.textContent = `Could not confirm server-side mission state: ${err.message}`;
+    verifiedEl.innerHTML = "";
+    verifiedEl.appendChild(el("div", { class: "hint", text: `Could not confirm server-side mission state: ${err.message}` }));
   }
 }
 
@@ -1074,7 +1265,38 @@ function renderDelegationChain(container, chain) {
   );
 }
 
-function renderRevocationResult(label, result, railCalls) {
+/**
+ * `big`, when true, renders the verdict as the same .integrityBig moment-of-truth box
+ * already used for ledger integrity (Day 1, Block 2) instead of the small in-card
+ * badge — used only for the AFTER-revocation result, since that's the actual proof
+ * moment; BEFORE stays the normal small treatment so the contrast itself reads as
+ * "something changed". No new visual language: same classes, same allow=green/
+ * deny=red semantics as everywhere else on this dashboard.
+ */
+function renderRevocationResult(label, result, railCalls, big) {
+  if (big) {
+    const wrapper = el("div", { style: "margin-top:8px" });
+    wrapper.appendChild(el("div", { class: "stageLabel", text: label, style: "margin-bottom:4px" }));
+    let verdictText = "(no result)";
+    let cls = "invalid";
+    let explain = "";
+    if (result && result.__error) {
+      verdictText = "✗ REQUEST FAILED";
+      explain = result.__error;
+    } else if (result && result.decision) {
+      const allowed = result.decision.verdict === "allow";
+      verdictText = allowed ? "✓ ALLOWED" : `✗ ${result.decision.verdict.toUpperCase()}`;
+      cls = allowed ? "valid" : "invalid";
+      explain = result.decision.reason;
+    }
+    wrapper.appendChild(el("div", { class: `integrityBig ${cls}`, text: verdictText }));
+    if (explain) wrapper.appendChild(el("div", { class: "hint", text: explain, style: "margin-top:6px" }));
+    if (railCalls !== undefined) {
+      wrapper.appendChild(el("div", { class: "hint", text: `RAIL CALLS AFTER REVOCATION: ${railCalls}` }));
+    }
+    return wrapper;
+  }
+
   const wrapper = el("div", { class: "card", style: "margin-top:8px" });
   wrapper.appendChild(el("div", { class: "top" }, [el("span", { class: "kind", text: label })]));
   const body = el("div", { class: "body" });
@@ -1149,7 +1371,7 @@ async function runRevocationScenario() {
     // unmodified contract) — never asserted or assumed independent of what the server
     // actually returned.
     const railCalls = after && after.execution ? 1 : 0;
-    resultsEl.appendChild(renderRevocationResult("AFTER REVOCATION", after, railCalls));
+    resultsEl.appendChild(renderRevocationResult("AFTER REVOCATION", after, railCalls, true));
   } catch (err) {
     resultsEl.appendChild(el("div", { class: "error", text: err.message }));
   } finally {

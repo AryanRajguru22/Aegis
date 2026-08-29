@@ -207,10 +207,19 @@
   .narrowTagline .can { color: var(--allow); font-weight: 700; }
   .narrowTagline .cannot { color: var(--deny); font-weight: 700; }
 
-  /* Scenario C: ledger integrity */
-  .integrityBig { font-family: var(--mono); font-size: 15px; font-weight: 700; padding: 12px; border-radius: 6px; text-align: center; letter-spacing: 0.3px; transition: background-color 250ms ease, color 250ms ease, border-color 250ms ease; border: 1px solid var(--border); }
+  /* Scenario C: ledger integrity — and, since Day 1/Block 2, every other "moment of
+     truth" verdict (revocation AFTER, attack-theatre final result) reuses this exact
+     same box unchanged, at the same hero scale, rather than inventing a second
+     visual language for "this is the proof that matters". */
+  .integrityBig { font-family: var(--mono); font-size: 19px; font-weight: 700; padding: 14px; border-radius: 6px; text-align: center; letter-spacing: 0.3px; transition: background-color 250ms ease, color 250ms ease, border-color 250ms ease; border: 1px solid var(--border); }
   .integrityBig.valid { color: var(--allow); background: rgba(46,160,67,0.10); border-color: var(--allow); }
   .integrityBig.invalid { color: var(--deny); background: rgba(229,72,77,0.10); border-color: var(--deny); }
+
+  /* Hero type tier (Day 1, Block 2) — the SAME 19px/700/mono treatment the
+     attack-theatre stat values already used, now named and reused selectively for
+     the one or two most important numbers on a given screen. Not a new visual
+     language: same font, same weight, same color tokens as everywhere else. */
+  .heroLine { font-family: var(--mono); font-size: 19px; font-weight: 700; color: var(--text); }
 
   @keyframes theatreEnter { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 </style>
@@ -219,7 +228,10 @@
 
 <div id="demoModeBanner"></div>
 <header>
-  <h1>AEGIS <span>— Trust Mesh Console</span></h1>
+  <div>
+    <h1>AEGIS <span>— Trust Mesh Console</span></h1>
+    <div class="hint" style="margin-top:2px">Bounded, revocable financial authority for autonomous agents.</div>
+  </div>
   <div id="principalBadge"></div>
 </header>
 
@@ -314,8 +326,8 @@
       </div>
 
       <div class="panel">
-        <h2>Delegation graph</h2>
-        <div id="graphView" class="hint">Select an agent to view its tree.</div>
+        <h2>Authority flow</h2>
+        <div id="graphView" class="hint">Select an agent to see how far its authority reaches — and where it narrows.</div>
       </div>
     </div>
 
@@ -400,6 +412,7 @@
         </div>
         <div id="attackAttempts"></div>
         <div id="attackVerified" class="hint" style="margin-top:6px"></div>
+        <div id="attackTrace" style="margin-top:12px"></div>
       </div>
 
       <div class="panel">
@@ -421,6 +434,7 @@
           <button id="integrityTamperBtn" class="danger">Tamper latest entry</button>
         </div>
         <div id="integrityExplain" class="hint" style="margin-top:8px"></div>
+        <div class="hint" style="margin-top:8px">A separate, independent offline verifier can check this exact ledger without trusting this dashboard, this server, or any Aegis code at all — see verifier/README.md.</div>
       </div>
 
     </div>

@@ -136,6 +136,9 @@ function loadContext() {
       renderDelegationChain: (container: FakeElement, chain: unknown[]) => void;
       renderRevocationResult: (label: string, result: unknown, railCalls?: number) => FakeElement;
       el: (tag: string, attrs?: Record<string, unknown>, children?: unknown[]) => FakeElement;
+      buildAttackTraceStages: (record: unknown, txInput: unknown) => Array<FakeElement | FakeTextNode>;
+      pickRepresentativeAttempt: (records: unknown[]) => unknown;
+      renderAttackTrace: (records: unknown[], txInput: unknown) => void;
     };
     elementsById: Map<string, FakeElement>;
   };
@@ -377,5 +380,245 @@ describe("Scenario A — launchBudgetAttack()'s final counters and verification 
     await run;
     assert.equal(elementsById.get("attackStatAllowed")!.textContent, "20", "every response was decision-layer 'allow'");
     assert.equal(elementsById.get("attackStatSpend")!.textContent, "5700.00 USD", "spend must reflect only the 15 that genuinely settled (15 x $380), not all 20 allows");
+  });
+});
+
+// ---------- Block 3A: attack theatre pipeline trace ----------
+
+const TX_INPUT = { amountMinorUnits: 38_000, currency: "USD", category: "flights", counterparty: "acme-airlines" };
+
+function stageCount(stages: unknown[]): number {
+  // Stages and arrows alternate; every real stage is at an even index (0, 2, 4, ...).
+  return Math.ceil(stages.length / 2);
+}
+
+describe("buildAttackTraceStages() — stops exactly at the real failing stage, never fabricates a later one", () => {
+  test("no record at all (nothing to trace) renders only the attack-attempt stage", () => {
+    const { context } = loadContext();
+    const stages = context.buildAttackTraceStages(null, TX_INPUT);
+    assert.equal(stageCount(stages), 1);
+  });
+
+  test("a request-level error (network/500 failure) stops after the request stage", () => {
+    const { context } = loadContext();
+    const record = { ok: false, error: "HTTP 500" };
+    const stages = context.buildAttackTraceStages(record, TX_INPUT);
+    assert.equal(stageCount(stages), 2);
+    assert.match((stages[2] as FakeElement).className, /stage-deny/);
+  });
+
+  test("a mission-gate denial (decision.source === 'mission') stops after ONE stage — capability, risk, decision, and execution genuinely never ran", () => {
+    const { context } = loadContext();
+    const record = { ok: true, response: { decision: { verdict: "deny", reason: "Transaction would exceed this mission's budget", source: "mission" } } };
+    const stages = context.buildAttackTraceStages(record, TX_INPUT);
+    assert.equal(stageCount(stages), 2, "attack-attempt stage + mission-gate stage only");
+    assert.match((stages[2] as FakeElement).className, /stage-deny/);
+    const texts: string[] = [];
+    walk(stages[2] as FakeElement, [], texts);
+    assert.ok(texts.some((t) => t.includes("exceed this mission's budget")));
+  });
+
+  test("a capability/policy denial (mission gate passed, policy.allowed === false) stops after THREE stages — risk, decision, and execution genuinely never ran", () => {
+    const { context } = loadContext();
+    const record = {
+      ok: true,
+      response: { decision: { verdict: "deny", reason: "Failed capability check", policy: { allowed: false, reason: "Failed capability check" } } },
+    };
+    const stages = context.buildAttackTraceStages(record, TX_INPUT);
+    assert.equal(stageCount(stages), 3, "attack + mission-gate(allow) + capability(deny)");
+    assert.match((stages[4] as FakeElement).className, /stage-deny/);
+  });
+
+  test("a risk-driven decision denial (policy allowed, but the composite decision is deny) stops after DECISION — execution genuinely never ran", () => {
+    const { context } = loadContext();
+    const record = {
+      ok: true,
+      response: {
+        decision: {
+          verdict: "deny",
+          reason: "Inconsistent with delegated goal",
+          policy: { allowed: true },
+          risk: { intentJudgment: { verdict: "inconsistent" }, baselineFlags: [] },
+        },
+      },
+    };
+    const stages = context.buildAttackTraceStages(record, TX_INPUT);
+    // attack + mission-gate(allow) + capability(allow) + risk(escalate-colored) + decision(deny) = 5 stages
+    assert.equal(stageCount(stages), 5);
+    assert.match((stages[8] as FakeElement).className, /stage-deny/);
+  });
+
+  test("an escalate verdict stops after DECISION — execution genuinely never ran (escalate is not allow)", () => {
+    const { context } = loadContext();
+    const record = {
+      ok: true,
+      response: {
+        decision: {
+          verdict: "escalate",
+          reason: "Behavioral anomaly detected",
+          policy: { allowed: true },
+          risk: { intentJudgment: { verdict: "consistent" }, baselineFlags: [{ code: "high_rate", detail: "5 in 60s" }] },
+        },
+      },
+    };
+    const stages = context.buildAttackTraceStages(record, TX_INPUT);
+    assert.equal(stageCount(stages), 5);
+    assert.match((stages[8] as FakeElement).className, /stage-escalate/);
+  });
+
+  test("an allow verdict whose rail execution then FAILS stops after EXECUTION — ledger-settlement stage is not shown as if it happened", () => {
+    const { context } = loadContext();
+    const record = {
+      ok: true,
+      response: {
+        decision: { verdict: "allow", reason: "ok", policy: { allowed: true }, risk: { intentJudgment: { verdict: "consistent" }, baselineFlags: [] } },
+        execution: { success: false, rail: "mock_x402", error: "quoted amount mismatch" },
+      },
+    };
+    const stages = context.buildAttackTraceStages(record, TX_INPUT);
+    // attack + mission-gate + capability + risk + decision + execution(deny) = 6
+    assert.equal(stageCount(stages), 6);
+    assert.match((stages[10] as FakeElement).className, /stage-deny/);
+  });
+
+  test("a full success (allow + settled execution) reaches all the way to LEDGER", () => {
+    const { context } = loadContext();
+    const record = {
+      ok: true,
+      response: {
+        decision: { verdict: "allow", reason: "ok", policy: { allowed: true }, risk: { intentJudgment: { verdict: "consistent" }, baselineFlags: [] } },
+        execution: { success: true, rail: "mock_x402", reference: "ref-123" },
+      },
+    };
+    const stages = context.buildAttackTraceStages(record, TX_INPUT);
+    // attack + mission-gate + capability + risk + decision + execution + ledger = 7
+    assert.equal(stageCount(stages), 7);
+    assert.match((stages[12] as FakeElement).className, /stage-allow/);
+    const texts: string[] = [];
+    walk(stages[12] as FakeElement, [], texts);
+    assert.ok(texts.some((t) => t.toLowerCase().includes("recorded")));
+  });
+});
+
+describe("pickRepresentativeAttempt() — prefers a genuinely blocked attempt, never fabricates one", () => {
+  test("when both allowed and blocked records exist, a blocked one is preferred", () => {
+    const { context } = loadContext();
+    const allowed = { ok: true, response: { decision: { verdict: "allow", reason: "ok" } } };
+    const blocked = { ok: true, response: { decision: { verdict: "deny", reason: "no", source: "mission" } } };
+    const picked = context.pickRepresentativeAttempt([allowed, null, blocked, allowed]);
+    assert.equal(picked, blocked);
+  });
+
+  test("a request-level error counts as a genuine stop and is preferred over an allowed record", () => {
+    const { context } = loadContext();
+    const allowed = { ok: true, response: { decision: { verdict: "allow", reason: "ok" } } };
+    const errored = { ok: false, error: "network failure" };
+    const picked = context.pickRepresentativeAttempt([allowed, errored]);
+    assert.equal(picked, errored);
+  });
+
+  test("when nothing was blocked, falls back to a real allowed record rather than returning nothing", () => {
+    const { context } = loadContext();
+    const allowed = { ok: true, response: { decision: { verdict: "allow", reason: "ok" } } };
+    const picked = context.pickRepresentativeAttempt([allowed]);
+    assert.equal(picked, allowed);
+  });
+
+  test("an all-null/empty attempt list picks nothing, rather than crashing or fabricating a record", () => {
+    const { context } = loadContext();
+    assert.equal(context.pickRepresentativeAttempt([null, null]), null);
+  });
+});
+
+describe("attack-theatre trace — script-shaped real response fields never become DOM markup", () => {
+  test("a script-shaped mission-gate denial reason renders as inert text only", () => {
+    const { context } = loadContext();
+    const payload = "<script>window.__xss_fired=30</script>";
+    const record = { ok: true, response: { decision: { verdict: "deny", reason: payload, source: "mission" } } };
+    const stages = context.buildAttackTraceStages(record, TX_INPUT);
+    const tags: string[] = [];
+    const texts: string[] = [];
+    for (const s of stages) walk(s as FakeElement, tags, texts);
+    assert.ok(!tags.includes("script"));
+    assert.ok(texts.some((t) => t.includes(payload)));
+  });
+
+  test("a script-shaped execution.error and execution.reference render as inert text only", () => {
+    const { context } = loadContext();
+    const errorPayload = "<img src=x onerror=alert(31)>";
+    const refPayload = "<svg onload=alert(32)>";
+    const record = {
+      ok: true,
+      response: {
+        decision: { verdict: "allow", reason: "ok", policy: { allowed: true }, risk: { intentJudgment: { verdict: "consistent" }, baselineFlags: [] } },
+        execution: { success: false, rail: "mock_x402", error: errorPayload },
+      },
+    };
+    const stages = context.buildAttackTraceStages(record, TX_INPUT);
+    const tags: string[] = [];
+    const texts: string[] = [];
+    for (const s of stages) walk(s as FakeElement, tags, texts);
+    assert.ok(!tags.includes("img"));
+    assert.ok(texts.some((t) => t.includes(errorPayload)));
+
+    const settledRecord = {
+      ok: true,
+      response: {
+        decision: { verdict: "allow", reason: "ok", policy: { allowed: true }, risk: { intentJudgment: { verdict: "consistent" }, baselineFlags: [] } },
+        execution: { success: true, rail: "mock_x402", reference: refPayload },
+      },
+    };
+    const settledStages = context.buildAttackTraceStages(settledRecord, TX_INPUT);
+    const tags2: string[] = [];
+    const texts2: string[] = [];
+    for (const s of settledStages) walk(s as FakeElement, tags2, texts2);
+    assert.ok(!tags2.includes("svg"));
+    assert.ok(texts2.some((t) => t.includes(refPayload)));
+  });
+
+  test("a script-shaped counterparty/category in the attack-attempt stage's own input renders as inert text only", () => {
+    const { context } = loadContext();
+    const payload = "<script>window.__xss_fired=33</script>";
+    const stages = context.buildAttackTraceStages(null, { amountMinorUnits: 1000, currency: "USD", category: payload, counterparty: "acme" });
+    const tags: string[] = [];
+    const texts: string[] = [];
+    for (const s of stages) walk(s as FakeElement, tags, texts);
+    assert.ok(!tags.includes("script"));
+    assert.ok(texts.some((t) => t.includes(payload)));
+  });
+});
+
+describe("renderAttackTrace() wired into a real launchBudgetAttack() run — reflects the actual representative attempt, never a hardcoded one", () => {
+  test("an unusual split with a specific mission-gate denial among the responses is exactly what appears in #attackTrace, not a different/generic denial", async () => {
+    const { elementsById, calls, launchBudgetAttack } = loadAttackTheatreContext();
+    const run = launchBudgetAttack();
+    assert.equal(calls.length, 20);
+
+    const distinctiveReason = "UNUSUAL-TEST-REASON: exceeds mission cap by exactly this much";
+    for (let i = 0; i < calls.length; i++) {
+      if (i === 0) {
+        calls[i]!.resolve(fakeJsonResponse({ agentId: "agent-x", decision: { verdict: "deny", reason: distinctiveReason, source: "mission" } }));
+      } else if (i < 5) {
+        calls[i]!.resolve(
+          fakeJsonResponse({
+            agentId: "agent-x",
+            decision: { verdict: "allow", reason: "ok", policy: { allowed: true }, risk: { intentJudgment: { verdict: "consistent" }, baselineFlags: [] } },
+            execution: { success: true, rail: "mock_x402", reference: `ref-${i}` },
+          })
+        );
+      } else {
+        calls[i]!.resolve(fakeJsonResponse({ agentId: "agent-x", decision: { verdict: "deny", reason: "budget exceeded", source: "mission" } }));
+      }
+    }
+    await new Promise((r) => setTimeout(r, 0));
+    calls[20]!.resolve(fakeJsonResponse({ missionId: "attack-test-1", budgetMinorUnits: 200_000, spentMinorUnits: 4 * 38_000, remainingMinorUnits: 200_000 - 4 * 38_000, currency: "USD" }));
+    await run;
+
+    // pickRepresentativeAttempt() finds the FIRST blocked record in array order — that's
+    // attempt #1 (index 0), which carries the distinctive reason text, not the generic
+    // "budget exceeded" text every later denial shares. If the trace were hardcoded or
+    // picked the wrong attempt, this exact string would not appear.
+    const traceText = elementsById.get("attackTrace")!.textContent;
+    assert.ok(traceText.includes(distinctiveReason), "the trace must reflect the actual first-blocked attempt's own real reason text");
   });
 });

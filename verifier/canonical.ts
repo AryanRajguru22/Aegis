@@ -29,16 +29,26 @@ export interface CanonicalContentFields {
 /**
  * Deterministic JSON serialization: object keys sorted lexicographically at every
  * nesting level, arrays preserve their original order, primitives serialize via
- * plain `JSON.stringify`. Must match src/state/crypto.ts's `stableStringify` exactly.
+ * plain `JSON.stringify`. Must match src/state/crypto.ts's `stableStringify` exactly
+ * — including its handling of `undefined`: an object property whose value is
+ * `undefined` is OMITTED (matching JSON.stringify, which is what data_json is
+ * actually persisted with), and an `undefined` array element is serialized as
+ * `null` (also matching JSON.stringify). Ledger entries such as
+ * mission_pipeline_outcome legitimately carry `execution`/`risk` fields that are
+ * absent — i.e. `undefined` — for non-"allow"/policy-denied outcomes; without this,
+ * the independent verifier would flag every one of those entries as tampered, even
+ * though nothing was altered.
  */
 export function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+    return `[${value.map((item) => (item === undefined ? "null" : stableStringify(item))).join(",")}]`;
   }
-  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, val]) => val !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   return `{${entries.map(([key, val]) => `${JSON.stringify(key)}:${stableStringify(val)}`).join(",")}}`;
 }
 

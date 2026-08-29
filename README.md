@@ -54,10 +54,20 @@ Agent ──attenuate──▶ Sub-agent ──attenuate──▶ Sub-sub-agent
    ▼
 Transaction attempt
    │
-   ▼  capability check → mission gate + atomic budget reservation → deterministic
-      policy → risk/intent judgment → composite decision (allow / deny / escalate)
-      → rail-agnostic execution → ledger entry, at every step
+   ▼  mission gate + atomic budget reservation → cryptographic capability/policy
+      check (incl. live revocation lookup) → risk/intent judgment → composite
+      decision (allow / deny / escalate) → rail-agnostic execution (on allow only)
+      → signed, hash-chained ledger entry, at every stage regardless of outcome
 ```
+
+![Architecture diagram](docs/screenshots/architecture-diagram.png)
+
+The diagram distinguishes the **control plane** (everything that can stop a
+transaction — the mission budget gate, the capability check, the risk/decision
+stage) from the **execution / evidence plane** (rail execution, the ledger, and
+the independent verifier — everything that acts and everything that proves what
+happened). Revocation is drawn as cross-cutting because it's enforced live, inside
+the capability-check stage, not as a separate cleanup pass.
 
 ### Capability attenuation
 
@@ -93,12 +103,13 @@ rather than silently replayed.
 
 ### Decision / risk / execution pipeline
 
-Capability verification → mission gate → deterministic policy → risk/intent judgment
-→ a composite `allow` / `deny` / `escalate` decision → (on `allow`) rail-agnostic
-execution against a payment rail. The risk/intent judgment is a **pluggable**
-interface — in demo mode it's a disclosed deterministic stand-in (see **Demo Mode**
-below); in a credentialed deployment it's a real Anthropic model call. Every one of
-these stages writes its own entry to the ledger, regardless of outcome.
+Mission gate + atomic budget reservation → cryptographic capability/policy check
+(including a live revocation-ancestry lookup) → risk/intent judgment → a composite
+`allow` / `deny` / `escalate` decision → (on `allow`) rail-agnostic execution against
+a payment rail. The risk/intent judgment is a **pluggable** interface — in demo mode
+it's a disclosed deterministic stand-in (see **Demo Mode** below); in a credentialed
+deployment it's a real Anthropic model call. Every one of these stages writes its own
+entry to the ledger, regardless of outcome.
 
 ### Tamper-evident ledger
 
@@ -149,9 +160,15 @@ independent verifier later.
 1. Create a principal (sign-in screen) — this issues your API key, stored locally.
 2. Create an agent: give it a delegated goal, a max amount, currency, allowed
    categories, allowed rails, and an expiry.
-3. Select the agent, then create a mission against it (a bounded goal + its own
-   budget) from the missions panel.
-4. Submit a transaction against the mission and watch the live decision/execution
+3. Select the agent — the **Authority Flow** panel renders the live chain from
+   principal down to the selected agent, and updates again as you attenuate
+   further sub-agents, so a narrowing (never widening) chain of authority is
+   something you can watch happen, not just read about.
+4. Create a mission against the selected agent (a bounded goal + its own,
+   narrower budget) from the missions panel, then select it — its remaining
+   budget is shown as a live, large-type figure that updates as transactions
+   settle against it.
+5. Submit a transaction against the mission and watch the live decision/execution
    feed and the hash-chained ledger view update.
 
 ## Running the attack theatre
@@ -161,13 +178,16 @@ The dashboard's demo-mode-only panel (visible once signed in with
 scripted or fabricated:
 
 - **Atomic budget attack** — fires many concurrent transaction attempts against one
-  mission's budget and shows the running allow/deny counters, then independently
+  mission's budget, shows the running allow/deny counters, then independently
   re-fetches the mission from the server to prove the displayed spend matches
-  server-side truth exactly.
+  server-side truth exactly. A representative denied attempt is traced stage by
+  stage through the real pipeline, stopping visibly at whichever stage actually
+  rejected it — never a scripted or hardcoded outcome.
 - **Delegation & revocation** — creates a parent and an attenuated child agent, runs a
   transaction before revocation (settles), revokes the child, runs the same
   transaction again (denied by the real capability layer), and visualizes the
-  narrowing/revoked chain.
+  narrowing/revoked chain, with the before/after verdicts rendered at the same
+  large, hard-to-miss scale as the ledger integrity check below.
 - **Ledger integrity** — checks the hash chain, then deliberately tampers one ledger
   entry through a scope-limited, demo-mode-only route and re-checks, showing the
   chain flip from valid to invalid with the exact corrupted entry named.
@@ -187,12 +207,14 @@ output, and a tamper walkthrough are in [`verifier/README.md`](verifier/README.m
 
 ## Test status
 
-**460 tests passing** — 409 in the main Aegis suite, 51 in the verifier's own suite —
-both run repeatedly with no flakes observed. Reproduce with:
+**492 tests passing** — 434 in the main Aegis suite (including dedicated dashboard
+tests covering the Authority Flow view, the pipeline trace, and XSS-safety of every
+value rendered from server responses), 58 in the verifier's own suite — both run
+repeatedly with no flakes observed. Reproduce with:
 
 ```bash
-npm test              # main suite (409)
-npm run test:verifier # verifier suite (51)
+npm test              # main suite (434)
+npm run test:verifier # verifier suite (58)
 ```
 
 ## What's provable live in Demo Mode vs. what requires external credentials
@@ -204,8 +226,8 @@ npm run test:verifier # verifier suite (51)
   server's own authoritative number independently re-checked against the UI.
 - The ledger is tamper-evident, with the exact corrupted entry identified — both by
   Aegis's own check and by the separate offline verifier.
-- The full pipeline (capability → mission → policy → risk stand-in → decision →
-  execution → ledger) runs end-to-end with no external accounts.
+- The full pipeline (mission gate → capability/policy check → risk stand-in →
+  decision → execution → ledger) runs end-to-end with no external accounts.
 
 **Requires external credentials (code paths exist, not exercised in this environment):**
 - A real Anthropic-backed semantic risk judgment (`ANTHROPIC_API_KEY`).
@@ -277,9 +299,13 @@ docs/           architecture, threat model, market research, product vision
 ## Screenshots
 
 Real, browser-captured screenshots from a live demo-mode run — not staged or
-generated.
+generated. The two verifier screenshots are the actual terminal output of
+`node verifier/dist/cli.js`, run against a genuine untampered export and a
+genuinely tampered one, rendered for readability (same content, same exit codes:
+`0` and `1`).
 
 | | |
 |---|---|
-| ![Dashboard overview](docs/screenshots/dashboard-overview.png) Dashboard overview | ![Concurrent budget attack](docs/screenshots/attack-theatre-concurrent-budget.png) Concurrent budget attack |
-| ![Revocation cascade](docs/screenshots/revocation-cascade.png) Revocation cascade | ![Ledger tamper detection](docs/screenshots/ledger-tamper-detection.png) Ledger tamper detection |
+| ![Dashboard overview](docs/screenshots/dashboard-overview.png) Dashboard overview | ![Authority Flow and live mission budget](docs/screenshots/authority-flow-mission-budget.png) Authority Flow + live mission budget |
+| ![Concurrent budget attack](docs/screenshots/concurrent-budget-attack.png) Concurrent budget attack, traced stage by stage | ![Revocation cascade](docs/screenshots/revocation-cascade.png) Revocation cascade, before → after |
+| ![Independent verifier — trusted](docs/screenshots/independent-verifier-pass.png) Independent verifier — genuine ledger, verified | ![Independent verifier — not verified](docs/screenshots/independent-verifier-fail.png) Independent verifier — tampered ledger, caught |

@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { canonicalContent, sha256Hex, publicKeyFromHex, verifySignature } from "../canonical.js";
+import { canonicalContent, sha256Hex, publicKeyFromHex, verifySignature, stableStringify } from "../canonical.js";
 import { GOLDEN_CASES, GOLDEN_PUBLIC_KEY_HEX } from "./fixtures.js";
 
 /**
@@ -76,5 +76,34 @@ describe("verifier/canonical.ts agrees with real production-generated golden fix
     const publicKey = publicKeyFromHex(GOLDEN_PUBLIC_KEY_HEX);
     assert.equal(verifySignature(publicKey, "somehash", "not-valid-hex!!"), false);
     assert.equal(verifySignature(publicKey, "somehash", ""), false);
+  });
+});
+
+describe("stableStringify — undefined handling matches JSON.stringify exactly (Step 22 regression)", () => {
+  // Mirrors src/state/__tests__/state-core.test.ts's identical regression suite for
+  // production's stableStringify — this file's copy is a SEPARATE, independent
+  // reimplementation (never imports src/state/crypto.ts), so it needs its own,
+  // equally explicit coverage. Before this fix, a legitimate mission_pipeline_outcome
+  // entry (execution/risk genuinely absent for non-"allow"/policy-denied outcomes —
+  // see src/mission/ledger.ts's MissionPipelineOutcomeData) would be misreported by
+  // this verifier as tampered on every reload, even though nothing was altered.
+
+  test("1. an object with an explicit `key: undefined` property serializes identically to JSON.stringify (the key is omitted)", () => {
+    const obj = { a: 1, execution: undefined, b: 2 };
+    assert.deepEqual(JSON.parse(stableStringify(obj)), JSON.parse(JSON.stringify(obj)));
+    assert.equal(stableStringify(obj), '{"a":1,"b":2}');
+  });
+
+  test("2. a nested undefined property (inside a nested object, and inside a nested array) matches JSON.stringify at every level", () => {
+    const obj = { outer: { inner: undefined, kept: 1 }, list: [1, undefined, 3], top: undefined };
+    // stableStringify sorts keys; JSON.stringify preserves insertion order — compare
+    // parsed values (key SET + value equivalence), not raw strings.
+    assert.deepEqual(JSON.parse(stableStringify(obj)), JSON.parse(JSON.stringify(obj)));
+  });
+
+  test("an array containing an undefined element substitutes null, matching JSON.stringify (not an empty hole)", () => {
+    const arr = [1, undefined, 3];
+    assert.equal(stableStringify(arr), JSON.stringify(arr));
+    assert.equal(stableStringify(arr), "[1,null,3]");
   });
 });

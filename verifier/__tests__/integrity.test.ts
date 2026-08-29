@@ -51,6 +51,25 @@ function keys() {
   return { privateKey, publicKey, publicKeyHex: keyToHex(publicKey) };
 }
 
+/**
+ * Builds one entry the same way buildChain() does (hash computed from the original
+ * in-memory `data`), then explicitly round-trips `data` through
+ * JSON.parse(JSON.stringify(data)) before returning it — simulating exactly what a
+ * real database reload does to data_json (src/state/ledger.ts's `append`/
+ * `rowToEntry`). buildChain() alone reuses the SAME object reference throughout and
+ * would never have exercised the Step 22 undefined-handling bug at all; this helper
+ * is what actually proves the fix at the verifier boundary, not just in
+ * canonical.ts's own unit tests.
+ */
+function buildReloadedEntry(privateKey: KeyObject, input: RawEntry, prevHash: string, seq: number): ExportedLedgerEntry {
+  const createdAt = `2026-01-01T00:00:0${seq}.000Z`;
+  const content = canonicalContent({ kind: input.kind, agentId: input.agentId, principalId: input.principalId, data: input.data, createdAt, prevHash });
+  const contentHash = sha256Hex(content);
+  const signature = sign(privateKey, contentHash);
+  const reloadedData = JSON.parse(JSON.stringify(input.data));
+  return { seq, kind: input.kind, agentId: input.agentId, principalId: input.principalId, data: reloadedData, createdAt, prevHash, contentHash, signature };
+}
+
 describe("verifyIntegrity() — Proof 1, adversarial cases", () => {
   test("1. a valid, untouched ledger verifies", () => {
     const { privateKey, publicKeyHex } = keys();
@@ -165,6 +184,61 @@ describe("verifyIntegrity() — Proof 1, adversarial cases", () => {
       validateArtifact({ schemaVersion: SCHEMA_VERSION, exportedAt: "x", publicKeyHex: "ab", entries: [{ seq: "not-a-number" }] }).ok,
       false
     );
+  });
+
+  test("3. a deny-shaped mission_pipeline_outcome entry (risk: undefined, reloaded through JSON round-trip) verifies as valid (Step 22 regression)", () => {
+    const { privateKey, publicKeyHex } = keys();
+    const denyShaped = {
+      missionId: "mission-1",
+      verdict: "deny",
+      reason: "Policy denied this transaction",
+      policy: { allowed: false, reason: "unauthorized category" },
+      risk: undefined,
+      execution: undefined,
+    };
+    const entry = buildReloadedEntry(privateKey, { kind: "mission_pipeline_outcome", agentId: "agent-1", principalId: "p-1", data: denyShaped }, GENESIS_HASH, 1);
+    const result = verifyIntegrity(publicKeyHex, [entry]);
+    assert.equal(result.valid, true);
+  });
+
+  test("4. an escalate-shaped mission_pipeline_outcome entry (execution: undefined, reloaded through JSON round-trip) verifies as valid (Step 22 regression)", () => {
+    const { privateKey, publicKeyHex } = keys();
+    const escalateShaped = {
+      missionId: "mission-1",
+      verdict: "escalate",
+      reason: "Behavioral anomaly detected",
+      policy: { allowed: true },
+      risk: { intentJudgment: { verdict: "consistent", rationale: "ok" }, baselineFlags: [{ code: "high_rate", detail: "5 in 60s" }] },
+      execution: undefined,
+    };
+    const entry = buildReloadedEntry(privateKey, { kind: "mission_pipeline_outcome", agentId: "agent-1", principalId: "p-1", data: escalateShaped }, GENESIS_HASH, 1);
+    const result = verifyIntegrity(publicKeyHex, [entry]);
+    assert.equal(result.valid, true);
+  });
+
+  test("5. an allow-shaped mission_pipeline_outcome entry (both fields present, reloaded through JSON round-trip) still verifies as valid (control)", () => {
+    const { privateKey, publicKeyHex } = keys();
+    const allowShaped = {
+      missionId: "mission-1",
+      verdict: "allow",
+      reason: "Policy satisfied",
+      policy: { allowed: true },
+      risk: { intentJudgment: { verdict: "consistent", rationale: "ok" }, baselineFlags: [] },
+      execution: { success: true, rail: "mock_x402", reference: "ref-1" },
+    };
+    const entry = buildReloadedEntry(privateKey, { kind: "mission_pipeline_outcome", agentId: "agent-1", principalId: "p-1", data: allowShaped }, GENESIS_HASH, 1);
+    const result = verifyIntegrity(publicKeyHex, [entry]);
+    assert.equal(result.valid, true);
+  });
+
+  test("8. genuine tampering of a reloaded deny-shaped entry's data is STILL caught — the fix closes the false positive without weakening true-positive detection", () => {
+    const { privateKey, publicKeyHex } = keys();
+    const denyShaped = { missionId: "mission-1", verdict: "deny", reason: "real reason", policy: { allowed: false }, risk: undefined, execution: undefined };
+    const entry = buildReloadedEntry(privateKey, { kind: "mission_pipeline_outcome", agentId: "agent-1", principalId: "p-1", data: denyShaped }, GENESIS_HASH, 1);
+    entry.data = { ...(entry.data as object), reason: "TAMPERED reason" };
+    const result = verifyIntegrity(publicKeyHex, [entry]);
+    assert.equal(result.valid, false);
+    assert.equal(result.failure!.stage, "content_hash");
   });
 
   test("valid artifact round-trips through validateArtifact() unchanged", () => {
