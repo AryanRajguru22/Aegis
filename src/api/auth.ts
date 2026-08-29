@@ -3,6 +3,7 @@ import type { PublicKey } from "@biscuit-auth/biscuit-wasm";
 import { getOwnRevocationId } from "../capability/index.js";
 import type { AgentStore } from "../state/agents.js";
 import type { PrincipalStore } from "../state/principals.js";
+import type { MissionStore, MissionRecord } from "../state/missions.js";
 import { ApiError } from "./errors.js";
 
 function extractBearer(req: Request): string {
@@ -75,4 +76,23 @@ export function requireOwnedAgent(agents: AgentStore, agentId: string, principal
     throw new ApiError(403, `Agent "${agentId}" does not belong to this principal`);
   }
   return agent;
+}
+
+/**
+ * For principal-authenticated routes that act on a specific mission by id
+ * (GET /missions/:id, POST /missions/:id/cancel). Deliberately stricter than
+ * requireOwnedAgent above: a mission belongs to someone else returns the exact same
+ * 404 as a mission that doesn't exist at all, never a 403 — so a caller guessing
+ * missionIds can never learn that a given id exists (and thus, indirectly, sniff
+ * missionId patterns/existence) merely by observing a 403-vs-404 status difference. A
+ * bare agentId is treated as lower-sensitivity information elsewhere in this API
+ * (requireOwnedAgent's 403 does confirm existence); a mission additionally carries a
+ * financial goal and budget, which this endpoint holds to a stricter disclosure bar.
+ */
+export function requireOwnedMission(missions: MissionStore, missionId: string, principalId: string): MissionRecord {
+  const mission = missions.get(missionId);
+  if (!mission || mission.principalId !== principalId) {
+    throw new ApiError(404, `Mission "${missionId}" not found`);
+  }
+  return mission;
 }

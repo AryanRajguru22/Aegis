@@ -47,6 +47,49 @@ export function parseCaveatsBody(body: unknown): Caveats {
   return caveats;
 }
 
+function requireOptionalStringArray(body: Record<string, unknown>, field: string): string[] | null {
+  const value = body[field];
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || !value.every((v) => typeof v === "string")) {
+    throw new ApiError(400, `Field "${field}", if present, must be an array of strings`);
+  }
+  return value;
+}
+
+export interface CreateMissionBody {
+  missionId: string;
+  agentId: string;
+  goal: string;
+  budgetMinorUnits: number;
+  currency: string;
+  allowedCategories: string[] | null;
+  approvedCounterparties: string[] | null;
+  expiresAt: string;
+}
+
+export function parseCreateMissionBody(body: unknown): CreateMissionBody {
+  if (!isPlainObject(body)) {
+    throw new ApiError(400, "Request body must be a JSON object");
+  }
+  const missionId = requireString(body, "missionId");
+  try {
+    assertValidIdentifier(missionId, "missionId");
+  } catch (error) {
+    throw new ApiError(400, error instanceof Error ? error.message : String(error));
+  }
+  const agentId = requireString(body, "agentId");
+  const goal = requireString(body, "goal");
+  const budgetMinorUnits = requirePositiveInteger(body, "budgetMinorUnits");
+  const currency = requireString(body, "currency");
+  const allowedCategories = requireOptionalStringArray(body, "allowedCategories");
+  const approvedCounterparties = requireOptionalStringArray(body, "approvedCounterparties");
+  const expiresAt = requireString(body, "expiresAt");
+  if (Number.isNaN(new Date(expiresAt).getTime())) {
+    throw new ApiError(400, `Field "expiresAt" must be a valid ISO 8601 timestamp`);
+  }
+  return { missionId, agentId, goal, budgetMinorUnits, currency, allowedCategories, approvedCounterparties, expiresAt };
+}
+
 export interface CreateAgentBody {
   agentId: string;
   delegatedGoal: string;
@@ -85,11 +128,41 @@ export function parseTransactionBody(body: unknown): TransactionRequest & { purp
   };
 }
 
+/** Optional — a POST /transactions request with no "missionId" behaves exactly as it always has. */
+export function parseOptionalMissionId(body: unknown): string | undefined {
+  if (!isPlainObject(body)) {
+    throw new ApiError(400, "Request body must be a JSON object");
+  }
+  const value = body["missionId"];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || value.length === 0) {
+    throw new ApiError(400, `Field "missionId", if present, must be a non-empty string`);
+  }
+  return value;
+}
+
 export function parseCounterparty(body: unknown): string {
   if (!isPlainObject(body)) {
     throw new ApiError(400, "Request body must be a JSON object");
   }
   return requireString(body, "counterparty");
+}
+
+/** Optional — /simulate has no counterparty concept unless a missionId is also present (see routes/transactions.ts). */
+export function parseOptionalCounterparty(body: unknown): string | undefined {
+  if (!isPlainObject(body)) {
+    throw new ApiError(400, "Request body must be a JSON object");
+  }
+  const value = body["counterparty"];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || value.length === 0) {
+    throw new ApiError(400, `Field "counterparty", if present, must be a non-empty string`);
+  }
+  return value;
 }
 
 export function parseRevokeBody(body: unknown): { reason: string } {

@@ -5,6 +5,7 @@ import {
 } from "../capability/index.js";
 import { openDatabase } from "../state/db.js";
 import { createAgentStore } from "../state/agents.js";
+import { createMissionStore } from "../state/missions.js";
 import { createPrincipalStore } from "../state/principals.js";
 import {
   createLedgerStore,
@@ -14,13 +15,17 @@ import {
   ledgerPrivateKeyToHex,
   ledgerPublicKeyToHex,
 } from "../state/index.js";
-import { AnthropicIntentJudge } from "../risk/anthropicJudge.js";
 import { createRailRegistry, type RailAdapter } from "../rails/types.js";
 import { StripeTestRailAdapter } from "../rails/stripeTestRail.js";
 import { startMockX402Server, MockX402RailAdapter, generatePayerKeyPair, publicKeyToHex } from "../rails/mockX402/index.js";
+import express from "express";
 import { createApp } from "./server.js";
+import { errorHandler } from "./errors.js";
 import { wrapWithNotifications } from "./notifyingLedger.js";
 import { createSqliteIdempotencyCache } from "./idempotency.js";
+import { createSqliteMissionReservationStore } from "../mission/reservation.js";
+import { isDemoModeEnabled, createServerIntentJudge, selectRailAdapters } from "./demoMode.js";
+import { createDemoTamperRouter } from "./demoTamper.js";
 import type { AppDependencies } from "./deps.js";
 
 /**
@@ -31,13 +36,32 @@ import type { AppDependencies } from "./deps.js";
  * wires dependencies together and starts listening.
  */
 async function main(): Promise<void> {
+  // Strictly opt-in, off by default — see src/api/demoMode.ts for the full extent of
+  // what this flag changes (only which IntentJudge and which rail adapters are
+  // constructed below; nothing else in the entire pipeline is aware it exists).
+  const demoMode = isDemoModeEnabled();
+
   const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
-  if (!anthropicApiKey) {
+  if (!demoMode && !anthropicApiKey) {
     // Fail closed, not degrade: see docs/THREAT_MODEL.md §11 — a missing risk judge
     // must never silently become "skip the risk check," so this process refuses to
-    // start at all rather than serve traffic without one.
-    console.error("ANTHROPIC_API_KEY is required to start the Aegis server (the intent-consistency risk check needs a real judge).");
+    // start at all rather than serve traffic without one. AEGIS_DEMO_MODE=true is the
+    // only way to bypass this, and doing so is loud (see the banner below), never silent.
+    console.error(
+      "ANTHROPIC_API_KEY is required to start the Aegis server (the intent-consistency risk check needs a real judge), " +
+        "unless AEGIS_DEMO_MODE=true is explicitly set for a local, credential-free demo run."
+    );
     process.exit(1);
+  }
+
+  if (demoMode) {
+    const banner = "=".repeat(78);
+    console.warn(banner);
+    console.warn("  AEGIS — LOCAL DEMO MODE (AEGIS_DEMO_MODE=true)");
+    console.warn("  Intent judge : deterministic stand-in — NOT a real AI risk evaluation");
+    console.warn("  Rails        : mock_x402 ONLY — Stripe is never registered in this mode");
+    console.warn("  No real money can move. This proves the SOFTWARE PIPELINE, not payment.");
+    console.warn(banner);
   }
 
   const dbPath = process.env.AEGIS_DB_PATH ?? "./aegis.db";
@@ -63,7 +87,12 @@ async function main(): Promise<void> {
         `deployment, set AEGIS_LEDGER_PRIVATE_KEY_HEX=${ledgerPrivateKeyToHex(ledgerKeys.privateKey)}`
     );
   }
-  const rawLedger = createLedgerStore(db, ledgerKeys, ledgerPublicKeyToHex(ledgerKeys.publicKey));
+  const ledgerPublicKeyHex = ledgerPublicKeyToHex(ledgerKeys.publicKey);
+  // Step 14: the public half is safe to print unconditionally — an Ed25519 public key
+  // reveals nothing an attacker could use, and independent verification (see
+  // verifier/) needs it. Never print ledgerKeys.privateKey or its hex here.
+  console.warn(`Ledger PUBLIC VERIFICATION KEY (safe to share — use with the independent verifier): ${ledgerPublicKeyHex}`);
+  const rawLedger = createLedgerStore(db, ledgerKeys, ledgerPublicKeyHex);
   const ledger = wrapWithNotifications(rawLedger);
 
   // Demo-scope simplification, consistent with the one already documented in
@@ -101,13 +130,32 @@ async function main(): Promise<void> {
   );
   const mockX402Rail = new MockX402RailAdapter({ baseUrl: mockX402Server.url, privateKey: demoPayer.privateKey });
 
-  const rails: RailAdapter[] = [mockX402Rail];
-  const stripeKey = process.env.STRIPE_SECRET_KEY;
-  if (stripeKey) {
-    rails.push(new StripeTestRailAdapter({ apiKey: stripeKey }));
+  // In demo mode, STRIPE_SECRET_KEY is never even read, regardless of whether it's
+  // set in the environment — "never silently substituted" and "cannot accidentally
+  // use a live/test Stripe key" both mean this rail must be structurally unreachable
+  // in demo mode, not just unconstructed by convention. selectRailAdapters (see
+  // src/api/demoMode.ts) independently enforces the same guarantee a second time.
+  let stripeAdapter: RailAdapter | undefined;
+  if (!demoMode) {
+    const stripeKey = process.env.STRIPE_SECRET_KEY;
+    if (stripeKey) {
+      stripeAdapter = new StripeTestRailAdapter({ apiKey: stripeKey });
+    } else {
+      console.warn("No STRIPE_SECRET_KEY set — the stripe_test rail is unavailable this run; only mock_x402 is registered.");
+    }
   } else {
-    console.warn("No STRIPE_SECRET_KEY set — the stripe_test rail is unavailable this run; only mock_x402 is registered.");
+    console.warn("AEGIS_DEMO_MODE is enabled — the stripe_test rail is never registered in demo mode, regardless of STRIPE_SECRET_KEY.");
   }
+  const rails: RailAdapter[] = selectRailAdapters({ demoMode, mockX402Rail, stripeAdapter });
+
+  // Ordering matters here: the idempotency cache's own constructor-time
+  // reconciliation (stale "pending" -> "orphaned") must run BEFORE the mission
+  // reservation store's, since the latter's crash-recovery reconciliation depends on
+  // every idempotency row it might reference already being in a settled state — see
+  // src/mission/reservation.ts's ordering requirement on createSqliteMissionReservationStore.
+  const idempotency = createSqliteIdempotencyCache(db);
+  const missions = createMissionStore(db);
+  const reservations = createSqliteMissionReservationStore(db);
 
   const deps: AppDependencies = {
     rootPrivateKey: rootKeys.privateKey,
@@ -116,14 +164,36 @@ async function main(): Promise<void> {
     agents,
     ledger,
     revocationStore: createSqliteRevocationStore(db),
-    intentJudge: new AnthropicIntentJudge({ apiKey: anthropicApiKey }),
+    intentJudge: createServerIntentJudge({ demoMode, anthropicApiKey }),
     rails: createRailRegistry(rails),
-    idempotency: createSqliteIdempotencyCache(db),
+    idempotency,
+    missions,
+    reservations,
+    demoMode,
   };
 
   const app = createApp(deps);
+
+  // Step 13, Scenario C: the ONE demo-only route (see demoTamper.ts) cannot simply be
+  // `app.use()`'d onto the app createApp() already returned — that app's own catch-all
+  // 404 handler and error handler are already the LAST middleware registered inside
+  // it, so anything appended afterward would never be reached (Express middleware runs
+  // in registration order). Instead, when — and only when — demo mode is enabled, the
+  // complete, entirely unmodified `app` is wrapped inside a tiny outer app that checks
+  // the demo route FIRST and falls through to the real app, untouched, for everything
+  // else. This keeps src/api/server.ts, createApp, and AppDependencies genuinely
+  // unchanged — the wrapper exists solely here, and solely when demoMode is true.
+  let listener = app;
+  if (demoMode) {
+    const wrapper = express();
+    wrapper.use(createDemoTamperRouter(db, principals));
+    wrapper.use(errorHandler);
+    wrapper.use(app);
+    listener = wrapper;
+  }
+
   const port = Number(process.env.PORT ?? 8787);
-  app.listen(port, () => {
+  listener.listen(port, () => {
     console.log(`Aegis listening on http://localhost:${port}`);
     console.log(`Dashboard: http://localhost:${port}/`);
   });

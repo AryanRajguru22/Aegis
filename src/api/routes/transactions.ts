@@ -1,10 +1,12 @@
 import { Router, type RequestHandler } from "express";
 import { decideTransaction } from "../../decision/decide.js";
 import { executeTransaction } from "../../execution/executeTransaction.js";
+import type { Caveats, TransactionRequest } from "../../capability/types.js";
 import type { AppDependencies } from "../deps.js";
 import { ApiError } from "../errors.js";
 import type { ClaimOutcome, IdempotencyCache, IdempotencyRecord } from "../idempotency.js";
-import { parseCounterparty, parseTransactionBody } from "../validation.js";
+import { checkMissionGate, computeMissionSpent, validateMissionAgainstToken, LEDGER_KIND_MISSION_POLICY_VERDICT, LEDGER_KIND_MISSION_TRANSACTION_LINK, LEDGER_KIND_MISSION_PIPELINE_OUTCOME } from "../../mission/index.js";
+import { parseCounterparty, parseOptionalCounterparty, parseOptionalMissionId, parseTransactionBody } from "../validation.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 25;
 const DEFAULT_WAIT_TIMEOUT_MS = 15_000;
@@ -75,12 +77,143 @@ function tryCompleteWithRetry(idempotency: IdempotencyCache, scopedKey: string, 
   return false;
 }
 
+type MissionGateResult =
+  | { kind: "ok"; delegatedGoal: string }
+  | { kind: "not_found" }
+  | { kind: "not_owned" }
+  | { kind: "token_violation"; reason: string }
+  | { kind: "denied"; reason: string };
+
+/**
+ * The mission-to-pipeline integration boundary described in docs/SYSTEM_ARCHITECTURE.md's
+ * mission flow: Mission/Goal → candidate transaction → capability verification →
+ * deterministic policy → risk/intent evaluation → decision → execution → ledger.
+ *
+ * This function is everything that happens BEFORE that existing, unmodified pipeline
+ * ever runs, and has NO side effects (no reservation, no ledger write) — used by both
+ * /simulate (a pure dry-run) and, wrapped by runMissionPreflight below, /transactions.
+ * It never mints, attenuates, or checks a capability token itself — a mission can only
+ * ever narrow what the agent's own token already allows, never grant anything beyond
+ * it, so every check here is a strictly ADDITIONAL, strictly NARROWING gate.
+ * Ownership, then token-compatibility, then the deterministic policy gate
+ * (checkMissionGate, pure — see src/mission/policy.ts) — cheapest and
+ * least-trusted-input first, mirroring src/decision/decide.ts's own documented
+ * ordering discipline.
+ */
+function evaluateMissionGate(
+  deps: AppDependencies,
+  agent: { agentId: string; principalId: string; caveats: Record<string, unknown> },
+  missionId: string,
+  transaction: TransactionRequest & { purpose: string },
+  counterparty: string
+): MissionGateResult {
+  const mission = deps.missions.get(missionId);
+  if (!mission) {
+    return { kind: "not_found" };
+  }
+  if (mission.agentId !== agent.agentId || mission.principalId !== agent.principalId) {
+    return { kind: "not_owned" };
+  }
+
+  try {
+    validateMissionAgainstToken(mission, agent.caveats as unknown as Caveats);
+  } catch (error) {
+    return { kind: "token_violation", reason: error instanceof Error ? error.message : String(error) };
+  }
+
+  const spentSoFar = computeMissionSpent(deps.ledger.listByAgent(agent.agentId), missionId);
+  const gate = checkMissionGate(
+    mission,
+    { amountMinorUnits: transaction.amountMinorUnits, category: transaction.category, counterparty },
+    spentSoFar
+  );
+  if (!gate.allowed) {
+    return { kind: "denied", reason: gate.reason ?? "Mission policy denied this transaction" };
+  }
+
+  return { kind: "ok", delegatedGoal: mission.goal };
+}
+
+/**
+ * The /transactions-only wrapper around evaluateMissionGate: on a passing gate,
+ * additionally attempts the atomic budget reservation (see src/mission/reservation.ts)
+ * — the REAL, concurrency-safe accept/reject decision. evaluateMissionGate running
+ * first is purely a cheaper pre-check for a clearer denial reason in the common
+ * (non-race) case; reserve()'s own atomic UPDATE, never a JS-level check, is what's
+ * actually trusted for the budget decision — see reservation.ts's own doc comment.
+ */
+function runMissionPreflight(
+  deps: AppDependencies,
+  agent: { agentId: string; principalId: string; caveats: Record<string, unknown> },
+  missionId: string,
+  transaction: TransactionRequest & { purpose: string },
+  counterparty: string,
+  scopedKey: string
+): MissionGateResult {
+  const evaluation = evaluateMissionGate(deps, agent, missionId, transaction, counterparty);
+  if (evaluation.kind !== "ok") {
+    return evaluation;
+  }
+
+  const reservation = deps.reservations.reserve(missionId, transaction.amountMinorUnits, scopedKey);
+  if (reservation.kind === "reserved") {
+    return evaluation;
+  }
+  if (reservation.kind === "insufficient_budget") {
+    return { kind: "denied", reason: "Transaction would exceed this mission's remaining budget" };
+  }
+  if (reservation.kind === "mission_not_active") {
+    return { kind: "denied", reason: `Mission is not active (status: "${reservation.status}")` };
+  }
+  return { kind: "not_found" }; // reservation.kind === "mission_not_found" — raced with a concurrent deletion-equivalent; treat the same as never having found it
+}
+
 export function createTransactionsRouter(deps: AppDependencies, requireAgent: RequestHandler): Router {
   const router = Router();
 
   router.post("/simulate", requireAgent, async (req, res) => {
     const agent = req.agent!;
     const transaction = parseTransactionBody(req.body);
+    const missionId = parseOptionalMissionId(req.body);
+    const counterparty = parseOptionalCounterparty(req.body);
+
+    let delegatedGoal = agent.delegatedGoal;
+
+    // Backwards compatible: a request with no missionId behaves exactly as /simulate
+    // always has. A dry run — no reservation is ever attempted here (see
+    // runMissionPreflight, /transactions-only) — but the mission-gate ledger entry IS
+    // written on a denial, mirroring how decideTransaction below already writes its
+    // own ledger entries even during simulate (an existing, unchanged behavior).
+    if (missionId !== undefined) {
+      if (!counterparty) {
+        throw new ApiError(400, '"counterparty" is required when "missionId" is present, to evaluate the mission\'s approved-counterparty gate');
+      }
+      const evaluation = evaluateMissionGate(deps, agent, missionId, transaction, counterparty);
+
+      if (evaluation.kind === "not_found") {
+        throw new ApiError(404, `Mission "${missionId}" not found`);
+      }
+      if (evaluation.kind === "not_owned") {
+        throw new ApiError(403, `Mission "${missionId}" does not belong to the authenticated agent`);
+      }
+      if (evaluation.kind === "token_violation") {
+        throw new ApiError(409, `Mission "${missionId}" exceeds the agent's own capability token: ${evaluation.reason}`);
+      }
+      if (evaluation.kind === "denied") {
+        deps.ledger.append({
+          kind: LEDGER_KIND_MISSION_POLICY_VERDICT,
+          agentId: agent.agentId,
+          principalId: agent.principalId,
+          data: { missionId, allowed: false, reason: evaluation.reason, transaction, counterparty },
+        });
+        res.status(200).json({
+          agentId: agent.agentId,
+          decision: { verdict: "deny" as const, reason: evaluation.reason, source: "mission" as const },
+        });
+        return;
+      }
+      delegatedGoal = evaluation.delegatedGoal;
+    }
 
     const decision = await decideTransaction(
       {
@@ -88,7 +221,7 @@ export function createTransactionsRouter(deps: AppDependencies, requireAgent: Re
         rootPublicKey: deps.rootPublicKey,
         agentId: agent.agentId,
         principalId: agent.principalId,
-        delegatedGoal: agent.delegatedGoal,
+        delegatedGoal,
         transaction,
       },
       {
@@ -112,9 +245,13 @@ export function createTransactionsRouter(deps: AppDependencies, requireAgent: Re
 
     const transaction = parseTransactionBody(req.body);
     const counterparty = parseCounterparty(req.body);
+    const missionId = parseOptionalMissionId(req.body);
 
     const scopedKey = `${agent.agentId}:${idempotencyKeyHeader}`;
-    const requestHash = deps.idempotency.hashRequest({ transaction, counterparty });
+    // missionId is folded into the hash: reusing the same Idempotency-Key with a
+    // DIFFERENT missionId (or with/without one at all) must be detected as a
+    // hash_mismatch, never silently treated as a replay of the original attempt.
+    const requestHash = deps.idempotency.hashRequest({ transaction, counterparty, missionId: missionId ?? null });
     const pollIntervalMs = deps.idempotencyPollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     const waitTimeoutMs = deps.idempotencyWaitTimeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
 
@@ -155,6 +292,55 @@ export function createTransactionsRouter(deps: AppDependencies, requireAgent: Re
     }
 
     // outcome.kind === "claimed": this request, and only this request, executes.
+
+    let delegatedGoal = agent.delegatedGoal;
+
+    if (missionId !== undefined) {
+      const preflight = runMissionPreflight(deps, agent, missionId, transaction, counterparty, scopedKey);
+
+      if (preflight.kind === "not_found") {
+        deps.idempotency.release(scopedKey);
+        throw new ApiError(404, `Mission "${missionId}" not found`);
+      }
+      if (preflight.kind === "not_owned") {
+        deps.idempotency.release(scopedKey);
+        throw new ApiError(403, `Mission "${missionId}" does not belong to the authenticated agent`);
+      }
+      if (preflight.kind === "token_violation") {
+        deps.idempotency.release(scopedKey);
+        throw new ApiError(409, `Mission "${missionId}" exceeds the agent's own capability token: ${preflight.reason}`);
+      }
+      if (preflight.kind === "denied") {
+        // A genuine mission-policy evaluation — recorded in the ledger, same as every
+        // other Aegis verdict, and cached via idempotency exactly like a normal
+        // deny/escalate response (NOT released — this is a final, cacheable decision,
+        // not "nothing happened"; releasing here would both incorrectly let a retry
+        // re-evaluate a decision that already has an answer, and — since the claim
+        // would already be gone — make the tryCompleteWithRetry call below fail every
+        // time), so a replay of this same key returns the identical denial without
+        // re-evaluating anything.
+        deps.ledger.append({
+          kind: LEDGER_KIND_MISSION_POLICY_VERDICT,
+          agentId: agent.agentId,
+          principalId: agent.principalId,
+          data: { missionId, allowed: false, reason: preflight.reason, transaction, counterparty },
+        });
+        const responseBody = {
+          agentId: agent.agentId,
+          decision: { verdict: "deny" as const, reason: preflight.reason, source: "mission" as const },
+        };
+        tryCompleteWithRetry(deps.idempotency, scopedKey, { requestHash, status: 200, body: responseBody });
+        res.status(200).json(responseBody);
+        return;
+      }
+      // preflight.kind === "ok": the mission's own goal is what this specific
+      // transaction is judged against — sharper than the agent's whole standing
+      // delegated goal, and the only mission-specific value threaded into the
+      // otherwise completely unmodified pipeline below.
+      delegatedGoal = preflight.delegatedGoal;
+    }
+
+    // outcome.kind === "claimed": this request, and only this request, executes.
     let result;
     try {
       result = await executeTransaction(
@@ -163,7 +349,7 @@ export function createTransactionsRouter(deps: AppDependencies, requireAgent: Re
           rootPublicKey: deps.rootPublicKey,
           agentId: agent.agentId,
           principalId: agent.principalId,
-          delegatedGoal: agent.delegatedGoal,
+          delegatedGoal,
           counterparty,
           transaction,
           idempotencyKey: scopedKey,
@@ -182,18 +368,74 @@ export function createTransactionsRouter(deps: AppDependencies, requireAgent: Re
       // (allow/deny/escalate, settled/failed execution) as data, never a throw — so
       // reaching here means execution itself never genuinely completed (a bug, a DB
       // error partway through deciding). Nothing valid happened, so it is safe to
-      // release the claim and let a retry with the same key attempt again from
-      // scratch.
+      // release the claim AND the mission reservation (if any), letting a retry with
+      // the same key attempt again from scratch.
       deps.idempotency.release(scopedKey);
+      if (missionId !== undefined) {
+        deps.reservations.release(missionId, transaction.amountMinorUnits, scopedKey);
+      }
       throw error;
     }
 
     // Execution genuinely completed at this point — allow/deny/escalate and
-    // settled/failed executions are all real, final outcomes. A failure from here on
-    // is a CACHING problem, not an execution problem, and must never be treated as
-    // "nothing happened": releasing the claim now would let a retry call
-    // executeTransaction a second time for a transaction that may have already
-    // settled on a real rail.
+    // settled/failed executions are all real, final outcomes.
+    if (missionId !== undefined) {
+      // Records the FULL outcome of this mission-scoped attempt — regardless of
+      // verdict — so it is visible in the mission's own history view even when it
+      // was denied by capability/policy, escalated, or failed to execute (none of
+      // which mission_policy_verdict or mission_transaction_link cover; see
+      // src/mission/ledger.ts's doc comment on LEDGER_KIND_MISSION_PIPELINE_OUTCOME).
+      // Written unconditionally, before the verdict-specific branches below, since it
+      // carries no budget/reservation weight at all — computeMissionSpent and
+      // reserve()'s own SQL only ever look at LEDGER_KIND_MISSION_TRANSACTION_LINK,
+      // so this entry's kind, content, and ordering relative to the branches below
+      // have zero effect on the budget-safety properties already proven for them.
+      deps.ledger.append({
+        kind: LEDGER_KIND_MISSION_PIPELINE_OUTCOME,
+        agentId: agent.agentId,
+        principalId: agent.principalId,
+        data: {
+          missionId,
+          amountMinorUnits: transaction.amountMinorUnits,
+          category: transaction.category,
+          counterparty,
+          verdict: result.decision.verdict,
+          reason: result.decision.reason,
+          policy: result.decision.policy,
+          risk: result.decision.risk,
+          execution: result.execution,
+        },
+      });
+
+      if (result.decision.verdict !== "allow") {
+        // Denied or escalated by the existing pipeline: nothing executed, no rail was
+        // ever called (see executeTransaction's own guarantee) — the reservation
+        // never became real spend, so it is released.
+        deps.reservations.release(missionId, transaction.amountMinorUnits, scopedKey);
+      } else if (result.execution && result.execution.success) {
+        // A genuine settlement. The ledger entry is written FIRST, then the
+        // reservation is released — in that order, deliberately: if a crash happens
+        // between these two statements, the durable, hash-chained record of the real
+        // spend already exists, and the reservation is simply left stuck (see
+        // src/mission/reservation.ts's reconcileMissionReservations) rather than
+        // silently disappearing, which is the safe direction. This is what makes the
+        // reserved amount transition to ledger-recorded "settled" without ever being
+        // counted in neither bucket (which would let it vanish from budget tracking)
+        // — a brief window of being counted in BOTH (an accepted, documented,
+        // conservative-only limitation) is the worst case, never the reverse.
+        deps.ledger.append({
+          kind: LEDGER_KIND_MISSION_TRANSACTION_LINK,
+          agentId: agent.agentId,
+          principalId: agent.principalId,
+          data: { missionId, amountMinorUnits: transaction.amountMinorUnits, success: true },
+        });
+        deps.reservations.release(missionId, transaction.amountMinorUnits, scopedKey);
+      } else {
+        // verdict === "allow" but the rail itself failed: nothing was actually spent.
+        deps.reservations.release(missionId, transaction.amountMinorUnits, scopedKey);
+      }
+    }
+
     const responseBody = { agentId: agent.agentId, ...result };
     tryCompleteWithRetry(deps.idempotency, scopedKey, { requestHash, status: 200, body: responseBody });
     // Whether or not the cache write ultimately succeeded, this caller — the one that

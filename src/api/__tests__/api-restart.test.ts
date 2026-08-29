@@ -11,6 +11,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { generateRootKeyPair, type RootKeyMaterial } from "../../capability/keys.js";
 import { openDatabase } from "../../state/db.js";
 import { createAgentStore } from "../../state/agents.js";
+import { createMissionStore } from "../../state/missions.js";
 import { createPrincipalStore } from "../../state/principals.js";
 import { createSqliteRevocationStore } from "../../state/revocations.js";
 import { createLedgerStore, generateLedgerKeyPair, ledgerPublicKeyToHex, type LedgerKeyMaterial } from "../../state/index.js";
@@ -18,6 +19,7 @@ import { createRailRegistry } from "../../rails/types.js";
 import { createApp } from "../server.js";
 import { wrapWithNotifications } from "../notifyingLedger.js";
 import { createSqliteIdempotencyCache } from "../idempotency.js";
+import { createSqliteMissionReservationStore } from "../../mission/reservation.js";
 import type { AppDependencies } from "../deps.js";
 import { RecordingRailAdapter, alwaysConsistentJudge, defaultCaveats, defaultTransaction } from "./harness.js";
 
@@ -67,7 +69,12 @@ function buildAppInstance(dbPath: string, rootKeys: RootKeyMaterial, ledgerKeys:
   const agents = createAgentStore(db);
   const ledger = wrapWithNotifications(createLedgerStore(db, ledgerKeys, ledgerPublicKeyToHex(ledgerKeys.publicKey)));
   const revocationStore = createSqliteRevocationStore(db);
+  // idempotency must be constructed before reservations — see
+  // src/mission/reservation.ts's ordering requirement on
+  // createSqliteMissionReservationStore.
   const idempotency = createSqliteIdempotencyCache(db);
+  const missions = createMissionStore(db);
+  const reservations = createSqliteMissionReservationStore(db);
   const rail = new RecordingRailAdapter("stripe_test"); // matches harness.ts's defaultTransaction()'s default rail
 
   const deps: AppDependencies = {
@@ -80,6 +87,8 @@ function buildAppInstance(dbPath: string, rootKeys: RootKeyMaterial, ledgerKeys:
     intentJudge: alwaysConsistentJudge(),
     rails: createRailRegistry([rail]),
     idempotency,
+    missions,
+    reservations,
     judgeTimeoutMs: 500,
   };
 

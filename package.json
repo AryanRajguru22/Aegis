@@ -18,7 +18,10 @@
     "test:rails:live": "npm run build && node --experimental-wasm-modules --test dist/rails/__tests__/stripe-rail.live.test.js",
     "test:execution": "npm run build && node --experimental-wasm-modules --test dist/execution/__tests__/*.test.js",
     "test:api": "npm run build && node --experimental-wasm-modules --test dist/api/__tests__/*.test.js",
-    "test": "npm run build && node --experimental-wasm-modules --test --test-reporter=spec dist/capability/__tests__/*.test.js dist/state/__tests__/*.test.js dist/risk/__tests__/risk-core.test.js dist/decision/__tests__/*.test.js dist/rails/__tests__/mock-x402-rail.test.js dist/rails/__tests__/stripe-rail.test.js dist/execution/__tests__/*.test.js dist/api/__tests__/*.test.js"
+    "test:mission": "npm run build && node --experimental-wasm-modules --test dist/mission/__tests__/*.test.js",
+    "test": "npm run build && node --experimental-wasm-modules --test --test-reporter=spec dist/capability/__tests__/*.test.js dist/state/__tests__/*.test.js dist/risk/__tests__/risk-core.test.js dist/decision/__tests__/*.test.js dist/rails/__tests__/mock-x402-rail.test.js dist/rails/__tests__/stripe-rail.test.js dist/execution/__tests__/*.test.js dist/api/__tests__/*.test.js dist/mission/__tests__/*.test.js",
+    "build:verifier": "tsc -p verifier/tsconfig.json",
+    "test:verifier": "npm run build:verifier && node --test --test-reporter=spec verifier/dist/__tests__/*.test.js"
   },
   "keywords": [],
   "author": "",

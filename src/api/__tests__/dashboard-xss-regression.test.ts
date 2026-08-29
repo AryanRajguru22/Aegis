@@ -108,10 +108,21 @@ function makeFakeElement(tag: string): FakeElement {
 
 function loadAppJsContext() {
   const src = fs.readFileSync(APP_JS_PATH, "utf8");
+  // A stable per-id cache: functions like renderMissionDetail that look up a specific
+  // container via document.getElementById("missionDetail") internally (rather than
+  // taking it as an argument, matching the rest of app.js's existing style) need the
+  // SAME fake element returned on every call for a given id, so a test can retrieve it
+  // afterward and inspect what was rendered into it — real DOM getElementById behaves
+  // the same way (a stable node per id), so this is a closer approximation, not a
+  // behavior change from the real thing.
+  const elementsById = new Map<string, FakeElement>();
   const fakeDocument = {
     createElement: (tag: string) => makeFakeElement(tag),
     createTextNode: (text: string): FakeTextNode => ({ nodeType: 3, data: String(text) }),
-    getElementById: (_id: string) => makeFakeElement("div"),
+    getElementById: (id: string) => {
+      if (!elementsById.has(id)) elementsById.set(id, makeFakeElement("div"));
+      return elementsById.get(id)!;
+    },
   };
   const context = vm.createContext({
     document: fakeDocument,
@@ -119,12 +130,20 @@ function loadAppJsContext() {
     fetch: () => Promise.reject(new Error("not stubbed — this test never triggers a network call")),
     console,
     crypto: { randomUUID: () => "test-uuid" },
+    confirm: () => false,
   });
   vm.runInContext(src, context, { filename: "app.js" });
   return context as unknown as {
-    renderDecisionResult: (container: FakeElement, body: unknown) => void;
+    renderDecisionResult: (container: FakeElement, body: unknown, options?: Record<string, unknown>) => void;
     renderError: (container: FakeElement, message: string) => void;
     el: (tag: string, attrs?: Record<string, unknown>, children?: unknown[]) => FakeElement;
+    pipelineStage: (label: string, statusWord: string, detailNodes: Array<FakeElement | FakeTextNode>) => FakeElement;
+    renderMissionCard: (mission: unknown) => FakeElement;
+    renderMissionHistoryEntry: (missionId: string, event: unknown) => FakeElement;
+    renderMissionDetail: (mission: unknown, ledgerEntries: unknown[]) => void;
+    selectMissionHistoryEvents: (allEntries: unknown[], missionId: string) => unknown[];
+    historyEventToDecisionBody: (event: unknown) => unknown;
+    document: typeof fakeDocument;
   };
 }
 
@@ -264,5 +283,291 @@ describe("renderError() — API-echoed error messages never become DOM markup", 
 
     assert.ok(!tags.includes("img"));
     assert.ok(texts.some((t) => t.includes(payload)));
+  });
+});
+
+describe("renderDecisionResult() — the mission-gate stage (Step 6 addition)", () => {
+  test("a script-shaped mission-gate denial reason (decision.source === 'mission') renders as inert text only", () => {
+    const { renderDecisionResult, el } = loadAppJsContext();
+    const container = el("div");
+
+    const payload = "<script>window.__xss_fired=5</script>";
+    renderDecisionResult(container, { decision: { verdict: "deny", reason: payload, source: "mission" } });
+
+    const tags: string[] = [];
+    const texts: string[] = [];
+    walk(container, tags, texts);
+
+    for (const dangerous of DANGEROUS_TAGS) assert.ok(!tags.includes(dangerous));
+    assert.ok(texts.some((t) => t.includes(payload)));
+  });
+
+  test("a script-shaped missionId (passed via options, e.g. reflecting a URL-adjacent value) never becomes DOM markup in the Mission stage label", () => {
+    const { renderDecisionResult, el } = loadAppJsContext();
+    const container = el("div");
+
+    const payload = "<img src=x onerror=alert(1)>";
+    renderDecisionResult(container, { decision: { verdict: "allow", reason: "ok" } }, { missionUsed: true, missionId: payload });
+
+    const tags: string[] = [];
+    const texts: string[] = [];
+    walk(container, tags, texts);
+
+    assert.ok(!tags.includes("img"));
+    assert.ok(texts.some((t) => t.includes(payload)));
+  });
+});
+
+describe("renderMissionCard() — a mission's own goal/categories/counterparties never become DOM markup", () => {
+  function payloadMission(overrides: Record<string, unknown> = {}) {
+    return {
+      missionId: "mission-1",
+      agentId: "agent-root",
+      goal: "fine",
+      status: "active",
+      budgetMinorUnits: 200_000,
+      currency: "USD",
+      spentMinorUnits: 0,
+      reservedMinorUnits: 0,
+      remainingMinorUnits: 200_000,
+      allowedCategories: ["flights"],
+      approvedCounterparties: ["acme-airlines"],
+      expiresAt: new Date().toISOString(),
+      ...overrides,
+    };
+  }
+
+  test("a script-shaped mission goal renders as inert text only", () => {
+    const { renderMissionCard } = loadAppJsContext();
+    const payload = "<script>window.__xss_fired=6</script>";
+    const card = renderMissionCard(payloadMission({ goal: payload }));
+
+    const tags: string[] = [];
+    const texts: string[] = [];
+    walk(card, tags, texts);
+
+    assert.ok(!tags.includes("script"));
+    assert.ok(texts.some((t) => t.includes(payload)));
+  });
+
+  test("script-shaped allowedCategories/approvedCounterparties entries render as inert text only", () => {
+    const { renderMissionCard } = loadAppJsContext();
+    const categoryPayload = "<img src=x onerror=alert(1)>";
+    const counterpartyPayload = "<svg onload=alert(2)>";
+    const card = renderMissionCard(payloadMission({ allowedCategories: [categoryPayload], approvedCounterparties: [counterpartyPayload] }));
+
+    const tags: string[] = [];
+    const texts: string[] = [];
+    walk(card, tags, texts);
+
+    assert.ok(!tags.includes("img"));
+    assert.ok(!tags.includes("svg"));
+    assert.ok(texts.some((t) => t.includes(categoryPayload)));
+    assert.ok(texts.some((t) => t.includes(counterpartyPayload)));
+  });
+});
+
+describe("renderMissionHistoryEntry() — every field in a self-contained mission_pipeline_outcome entry never becomes DOM markup (Step 8)", () => {
+  test("a mission_policy_verdict (gate denial) entry with a script-shaped reason renders as inert text only", () => {
+    const { renderMissionHistoryEntry } = loadAppJsContext();
+    const payload = "<script>window.__xss_fired=7</script>";
+    const event = { seq: 5, createdAt: new Date().toISOString(), kind: "mission_policy_verdict", data: { missionId: "mission-1", reason: payload } };
+
+    const card = renderMissionHistoryEntry("mission-1", event);
+
+    const tags: string[] = [];
+    const texts: string[] = [];
+    walk(card, tags, texts);
+
+    assert.ok(!tags.includes("script"));
+    assert.ok(texts.some((t) => t.includes(payload)));
+  });
+
+  test("a mission_pipeline_outcome entry whose execution FAILED, with script/svg-shaped policy/risk/execution fields all self-contained in its own data, renders every shown one as inert text only", () => {
+    const { renderMissionHistoryEntry } = loadAppJsContext();
+    const rationalePayload = "<script>window.__xss_fired=8</script>";
+    const flagPayload = "<img src=x onerror=alert(3)>";
+    const policyReasonPayload = "<svg onload=alert(4)>";
+    const errorPayload = '"><script>window.__xss_fired=9</script>';
+
+    const event = {
+      seq: 10,
+      createdAt: new Date().toISOString(),
+      kind: "mission_pipeline_outcome",
+      data: {
+        missionId: "mission-1",
+        amountMinorUnits: 38_000,
+        category: "flights",
+        counterparty: "acme-airlines",
+        verdict: "allow",
+        reason: "ok",
+        policy: { allowed: true, reason: policyReasonPayload },
+        risk: { intentJudgment: { verdict: "consistent", rationale: rationalePayload }, baselineFlags: [{ code: "high_rate", detail: flagPayload }] },
+        // execution.success: false — only .error is ever shown in this branch, never
+        // .reference (matching renderDecisionResult's existing, unchanged behavior,
+        // covered by the pre-existing "script/svg-shaped execution.rail and
+        // execution.error" test above) — so this test does not assert on a reference
+        // payload here; a SUCCESSFUL settlement's reference is already covered by the
+        // pre-existing "execution.reference (on a successful settlement)" test.
+        execution: { success: false, rail: "stripe_test", error: errorPayload, reference: "" },
+      },
+    };
+
+    const card = renderMissionHistoryEntry("mission-1", event);
+
+    const tags: string[] = [];
+    const texts: string[] = [];
+    walk(card, tags, texts);
+
+    for (const dangerous of DANGEROUS_TAGS) assert.ok(!tags.includes(dangerous), `no <${dangerous}> from any field in the self-contained entry`);
+    for (const payload of [rationalePayload, flagPayload, policyReasonPayload, errorPayload]) {
+      assert.ok(texts.some((t) => t.includes(payload)), `payload ${payload} must survive as literal text`);
+    }
+  });
+
+  test("a mission_pipeline_outcome entry DENIED by capability/policy (no risk field at all, matching decide.ts's own contract) renders as inert text only", () => {
+    const { renderMissionHistoryEntry } = loadAppJsContext();
+    const policyReasonPayload = "<script>window.__xss_fired=11</script>";
+    const event = {
+      seq: 3,
+      createdAt: new Date().toISOString(),
+      kind: "mission_pipeline_outcome",
+      data: {
+        missionId: "mission-1",
+        amountMinorUnits: 50_000,
+        category: "flights",
+        counterparty: "acme-airlines",
+        verdict: "deny",
+        reason: policyReasonPayload,
+        policy: { allowed: false, reason: policyReasonPayload },
+        // no `risk` field — the risk engine never runs on a policy-denied transaction.
+      },
+    };
+
+    const card = renderMissionHistoryEntry("mission-1", event);
+
+    const tags: string[] = [];
+    const texts: string[] = [];
+    walk(card, tags, texts);
+
+    assert.ok(!tags.includes("script"));
+    assert.ok(texts.some((t) => t.includes(policyReasonPayload)));
+  });
+});
+
+describe("renderMissionDetail() — the full mission detail view never becomes DOM markup", () => {
+  test("a mission with script-shaped fields, rendered alongside a script-shaped ledger history, is entirely inert text", () => {
+    const context = loadAppJsContext();
+    const goalPayload = "<script>window.__xss_fired=10</script>";
+    const reasonPayload = "<img src=x onerror=alert(6)>";
+
+    const mission = {
+      missionId: "mission-1",
+      agentId: "agent-root",
+      goal: goalPayload,
+      status: "active",
+      budgetMinorUnits: 200_000,
+      currency: "USD",
+      spentMinorUnits: 0,
+      reservedMinorUnits: 0,
+      remainingMinorUnits: 200_000,
+      allowedCategories: ["flights"],
+      approvedCounterparties: ["acme-airlines"],
+      expiresAt: new Date().toISOString(),
+    };
+    const ledgerEntries = [
+      { seq: 1, createdAt: new Date().toISOString(), kind: "mission_policy_verdict", data: { missionId: "mission-1", reason: reasonPayload } },
+    ];
+
+    context.renderMissionDetail(mission, ledgerEntries);
+    const rendered = context.document.getElementById("missionDetail");
+
+    const tags: string[] = [];
+    const texts: string[] = [];
+    walk(rendered, tags, texts);
+
+    assert.ok(!tags.includes("script"));
+    assert.ok(!tags.includes("img"));
+    assert.ok(texts.some((t) => t.includes(goalPayload)));
+    assert.ok(texts.some((t) => t.includes(reasonPayload)));
+  });
+});
+
+describe("selectMissionHistoryEvents() / historyEventToDecisionBody() — correctness of the Step 8 self-contained mission-history selection", () => {
+  test("selects a mission's own mission_pipeline_outcome and mission_policy_verdict entries, sorted most-recent-first, and nothing else", () => {
+    const { selectMissionHistoryEvents } = loadAppJsContext();
+    const entries = [
+      { seq: 1, kind: "policy_verdict", data: { allowed: true } },
+      { seq: 2, kind: "mission_policy_verdict", data: { missionId: "mission-1", reason: "denied first" } },
+      { seq: 3, kind: "mission_pipeline_outcome", data: { missionId: "mission-1", verdict: "allow", reason: "ok", policy: { allowed: true } } },
+      { seq: 4, kind: "mission_transaction_link", data: { missionId: "mission-1", amountMinorUnits: 38_000, success: true } },
+      { seq: 5, kind: "execution_result", data: { success: true, rail: "stripe_test", reference: "ref-1" } },
+    ];
+
+    const result = selectMissionHistoryEvents(entries, "mission-1") as Array<{ seq: number; kind: string }>;
+    assert.deepEqual(result.map((e) => e.seq), [3, 2], "most-recent-first, and mission_transaction_link/policy_verdict/execution_result must never appear directly");
+    assert.deepEqual(result.map((e) => e.kind), ["mission_pipeline_outcome", "mission_policy_verdict"]);
+  });
+
+  test("never selects entries belonging to a DIFFERENT mission, even one interleaved immediately adjacent in seq order", () => {
+    const { selectMissionHistoryEvents } = loadAppJsContext();
+    const entries = [
+      { seq: 1, kind: "mission_pipeline_outcome", data: { missionId: "other-mission", verdict: "allow", reason: "other's own", policy: { allowed: true } } },
+      { seq: 2, kind: "mission_pipeline_outcome", data: { missionId: "mission-1", verdict: "deny", reason: "mission-1's own", policy: { allowed: false } } },
+    ];
+
+    const result = selectMissionHistoryEvents(entries, "mission-1") as Array<{ data: { reason: string } }>;
+    assert.equal(result.length, 1);
+    assert.equal(result[0]!.data.reason, "mission-1's own");
+  });
+
+  test("never selects an unrelated, non-mission-scoped transaction's ordinary policy_verdict/decision/execution_result entries", () => {
+    const { selectMissionHistoryEvents } = loadAppJsContext();
+    const entries = [
+      { seq: 1, kind: "policy_verdict", data: { allowed: true } },
+      { seq: 2, kind: "decision", data: { verdict: "deny", reason: "unrelated denial", source: "policy" } },
+      { seq: 3, kind: "mission_pipeline_outcome", data: { missionId: "mission-1", verdict: "allow", reason: "ok", policy: { allowed: true } } },
+    ];
+
+    const result = selectMissionHistoryEvents(entries, "mission-1") as Array<{ seq: number }>;
+    assert.deepEqual(result.map((e) => e.seq), [3]);
+  });
+
+  test("historyEventToDecisionBody reconstructs a deny-shaped body for a mission_policy_verdict (gate denial) entry", () => {
+    const { historyEventToDecisionBody } = loadAppJsContext();
+    const body = historyEventToDecisionBody({ kind: "mission_policy_verdict", data: { reason: "budget exceeded" } }) as { decision: { verdict: string; source: string } };
+    assert.equal(body.decision.verdict, "deny");
+    assert.equal(body.decision.source, "mission");
+  });
+
+  test("historyEventToDecisionBody reconstructs the full decision+execution shape directly from a mission_pipeline_outcome entry's own data, with no correlation step", () => {
+    const { historyEventToDecisionBody } = loadAppJsContext();
+    const event = {
+      kind: "mission_pipeline_outcome",
+      data: {
+        missionId: "mission-1",
+        verdict: "escalate",
+        reason: "flagged",
+        policy: { allowed: true },
+        risk: { intentJudgment: { verdict: "inconsistent", rationale: "does not match goal" }, baselineFlags: [] },
+        execution: undefined,
+      },
+    };
+    const body = historyEventToDecisionBody(event) as { decision: { verdict: string; reason: string; policy: unknown; risk: unknown }; execution: unknown };
+    assert.equal(body.decision.verdict, "escalate");
+    assert.equal(body.decision.reason, "flagged");
+    assert.deepEqual(body.decision.policy, { allowed: true });
+    assert.equal((body.decision.risk as { intentJudgment: { verdict: string } }).intentJudgment.verdict, "inconsistent");
+    assert.equal(body.execution, undefined, "no execution ever occurs on a non-allow verdict — matches executeTransaction's own contract");
+  });
+
+  test("historyEventToDecisionBody omits `risk` entirely for a capability/policy-denied outcome, matching decide.ts's own contract (risk never runs on a policy denial)", () => {
+    const { historyEventToDecisionBody } = loadAppJsContext();
+    const event = {
+      kind: "mission_pipeline_outcome",
+      data: { missionId: "mission-1", verdict: "deny", reason: "over the cap", policy: { allowed: false, reason: "over the cap" } },
+    };
+    const body = historyEventToDecisionBody(event) as { decision: { risk?: unknown } };
+    assert.equal(body.decision.risk, undefined);
   });
 });

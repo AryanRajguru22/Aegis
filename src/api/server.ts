@@ -6,6 +6,7 @@ import { requireAgentToken, requirePrincipalAuth } from "./auth.js";
 import { errorHandler } from "./errors.js";
 import { createPrincipalsRouter } from "./routes/principals.js";
 import { createAgentsRouter } from "./routes/agents.js";
+import { createMissionsRouter } from "./routes/missions.js";
 import { createTransactionsRouter } from "./routes/transactions.js";
 import { createLedgerRouter } from "./routes/ledger.js";
 import { createStreamRouter } from "./routes/stream.js";
@@ -28,11 +29,20 @@ export function createApp(deps: AppDependencies): Express {
   // server-side rendering and no access of its own to anything privileged.
   app.use(express.static(path.join(import.meta.dirname, "../../public")));
 
+  // Unauthenticated by design: this reveals only a server-wide config flag (whether
+  // this instance was started with AEGIS_DEMO_MODE=true — see src/api/demoMode.ts),
+  // never anything about a specific principal/agent/account, so it needs no auth
+  // boundary — the dashboard fetches it before sign-in to show its demo-mode banner.
+  app.get("/demo-mode", (_req, res) => {
+    res.status(200).json({ demoMode: Boolean(deps.demoMode) });
+  });
+
   const requirePrincipal = requirePrincipalAuth(deps.principals);
   const requireAgent = requireAgentToken(deps.rootPublicKey, deps.agents);
 
   app.use(createPrincipalsRouter(deps));
   app.use(createAgentsRouter(deps, requirePrincipal));
+  app.use(createMissionsRouter(deps, requirePrincipal));
   app.use(createTransactionsRouter(deps, requireAgent));
   app.use(createLedgerRouter(deps, requirePrincipal));
   app.use(createStreamRouter(deps, requirePrincipal));

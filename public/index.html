@@ -129,10 +129,95 @@
   .hint { font-size: 11px; color: var(--text-dim); margin-top: 6px; }
   a.link { color: var(--accent); cursor: pointer; }
   #ledgerEntries { max-height: 260px; overflow-y: auto; margin-top: 8px; }
+
+  #demoModeBanner {
+    display: none;
+    text-align: center;
+    padding: 6px 14px;
+    background: var(--escalate);
+    color: #1a1200;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.3px;
+  }
+
+  /* ---- missions ---- */
+  .missionsGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 0 14px 14px; align-items: start; }
+  #missionList { display: flex; flex-direction: column; gap: 8px; max-height: 520px; overflow-y: auto; }
+  .missionCard { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--panel-2); font-size: 12px; cursor: pointer; }
+  .missionCard.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .missionCard .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .missionCard .id { font-family: var(--mono); font-weight: 600; }
+  .missionCard .goal { color: var(--text); margin-bottom: 4px; }
+  .missionCard .hint { margin: 2px 0; }
+  .missionCard .actions { margin-top: 8px; display: flex; gap: 6px; }
+  .missionCard .actions button { padding: 3px 8px; font-size: 11px; }
+
+  /* ---- decision pipeline (Mission -> Capability & Policy -> Risk -> Decision -> Execution) ---- */
+  .pipeline { display: flex; flex-direction: column; gap: 6px; }
+  .stage { border-left: 3px solid var(--border); border-radius: 4px; padding: 6px 10px; background: var(--panel-2); }
+  .stage-allow { border-left-color: var(--allow); }
+  .stage-deny { border-left-color: var(--deny); }
+  .stage-escalate { border-left-color: var(--escalate); }
+  .stage-gray { border-left-color: var(--text-dim); }
+  .stageHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .stageLabel { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); }
+  .stageDetail { font-size: 12px; color: var(--text-dim); margin-top: 4px; line-height: 1.5; }
+  .stageDetail b { color: var(--text); }
+  #missionDetail { margin-top: 4px; }
+  #missionDetail h3 { font-family: var(--mono); font-size: 13px; margin: 0 0 4px; }
+  #missionHistory { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; max-height: 420px; overflow-y: auto; }
+
+  /* ---- demo theatre (Step 13) — hidden unless the server reports AEGIS_DEMO_MODE=true ---- */
+  #demoTheatre { display: none; padding: 0 14px 14px; }
+  .theatreTitle { padding: 4px 2px 10px; }
+  .theatreTitle h2 { margin: 0 0 4px; font-size: 15px; text-transform: none; letter-spacing: 0; color: var(--text); }
+  .theatreGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; align-items: start; }
+  @media (max-width: 1200px) { .theatreGrid { grid-template-columns: 1fr; } }
+
+  /* Scenario A: attack theatre */
+  .attackSummary { display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 0; }
+  .attackSummary .stat { display: flex; flex-direction: column; gap: 2px; min-width: 64px; }
+  .attackSummary .stat .value { font-family: var(--mono); font-size: 19px; font-weight: 700; color: var(--text); transition: color 200ms ease; }
+  .attackSummary .stat .label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); }
+  #attackAttempts { display: flex; flex-direction: column; gap: 3px; max-height: 280px; overflow-y: auto; margin-top: 8px; }
+  .attemptRow {
+    display: flex; align-items: center; justify-content: space-between;
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px;
+    background: var(--panel-2); font-family: var(--mono); font-size: 11px;
+    transition: background-color 220ms ease, border-color 220ms ease;
+    animation: theatreEnter 160ms ease;
+  }
+  .attemptRow.pending { color: var(--text-dim); }
+  .attemptRow.allow { border-color: var(--allow); background: rgba(46,160,67,0.10); color: var(--text); }
+  .attemptRow.deny { border-color: var(--deny); background: rgba(229,72,77,0.10); color: var(--text); }
+  .attemptRow .attemptStatus { font-weight: 700; letter-spacing: 0.3px; }
+
+  /* Scenario B/D: delegation chain */
+  .chainFlow { display: flex; flex-direction: column; align-items: stretch; }
+  .chainNode { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--panel-2); animation: theatreEnter 220ms ease; transition: border-color 220ms ease, opacity 220ms ease; }
+  .chainNode.revoked { border-color: var(--deny); opacity: 0.6; }
+  .chainNode .chainTop { display: flex; align-items: center; justify-content: space-between; }
+  .chainNode .chainRole { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
+  .chainNode .lockBadge { color: var(--deny); font-size: 10px; font-weight: 700; letter-spacing: 0.3px; }
+  .chainNode .chainId { font-family: var(--mono); font-weight: 700; margin: 2px 0 6px; font-size: 12px; }
+  .chainNode .chainCaveats { font-family: var(--mono); font-size: 11px; color: var(--text-dim); line-height: 1.7; }
+  .chainArrow { text-align: center; color: var(--text-dim); font-size: 15px; padding: 2px 0; }
+  .narrowTagline { text-align: center; font-size: 11px; letter-spacing: 0.4px; margin-top: 10px; padding: 8px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); }
+  .narrowTagline .can { color: var(--allow); font-weight: 700; }
+  .narrowTagline .cannot { color: var(--deny); font-weight: 700; }
+
+  /* Scenario C: ledger integrity */
+  .integrityBig { font-family: var(--mono); font-size: 15px; font-weight: 700; padding: 12px; border-radius: 6px; text-align: center; letter-spacing: 0.3px; transition: background-color 250ms ease, color 250ms ease, border-color 250ms ease; border: 1px solid var(--border); }
+  .integrityBig.valid { color: var(--allow); background: rgba(46,160,67,0.10); border-color: var(--allow); }
+  .integrityBig.invalid { color: var(--deny); background: rgba(229,72,77,0.10); border-color: var(--deny); }
+
+  @keyframes theatreEnter { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 </head>
 <body>
 
+<div id="demoModeBanner"></div>
 <header>
   <h1>AEGIS <span>— Trust Mesh Console</span></h1>
   <div id="principalBadge"></div>
@@ -217,6 +302,10 @@
         <input id="txCounterparty" value="acme-airlines" />
         <label>Purpose</label>
         <textarea id="txPurpose" rows="2">Round-trip flight for the Q3 vendor conference</textarea>
+        <label>Mission (optional — narrows this transaction to a bounded financial objective)</label>
+        <select id="txMission">
+          <option value="">None — use the agent's standing authority</option>
+        </select>
         <div class="row" style="margin-top:10px">
           <button id="simulateBtn" class="secondary">Simulate</button>
           <button id="executeBtn">Execute</button>
@@ -244,6 +333,97 @@
       </div>
     </div>
 
+  </div>
+
+  <div class="missionsGrid">
+    <div class="panel">
+      <h2>Missions</h2>
+      <div id="missionList"></div>
+      <hr style="border-color: var(--border); margin: 12px 0" />
+      <div class="hint">Create a bounded financial objective for one of your agents — the agent can then only spend under it exactly as far as its own capability token, plus these narrower limits, allow.</div>
+      <label>Mission ID</label>
+      <input id="missionIdInput" placeholder="mission-credits" />
+      <label>Agent</label>
+      <select id="missionAgentId"></select>
+      <label>Goal</label>
+      <textarea id="missionGoal" rows="2" placeholder="Purchase the required API credits from an approved provider, staying under $2,000."></textarea>
+      <div class="row">
+        <div>
+          <label>Budget</label>
+          <input id="missionBudget" type="number" value="2000" />
+        </div>
+        <div>
+          <label>Currency</label>
+          <input id="missionCurrency" value="USD" />
+        </div>
+      </div>
+      <label>Allowed categories (comma-separated, blank = same as agent's token)</label>
+      <input id="missionCategories" placeholder="flights" />
+      <label>Approved counterparties (comma-separated, blank = unrestricted)</label>
+      <input id="missionCounterparties" placeholder="acme-airlines" />
+      <label>Expires in (days)</label>
+      <input id="missionExpiryDays" type="number" value="30" />
+      <div class="row" style="margin-top:10px">
+        <button id="createMissionBtn">Create mission</button>
+      </div>
+      <div id="missionError" class="error"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Mission detail — why money was or wasn't allowed to move</h2>
+      <div id="missionDetail" class="hint">Select a mission to see its goal, live budget, and full transaction history.</div>
+    </div>
+  </div>
+
+  <div id="demoTheatre">
+    <div class="theatreTitle">
+      <h2>Attack Theatre — Live Security Demonstrations</h2>
+      <div class="hint">Every result below comes from real requests against the real, unmodified Aegis pipeline. Nothing here is simulated.</div>
+    </div>
+    <div class="theatreGrid">
+
+      <div class="panel">
+        <h2>Concurrent budget race</h2>
+        <div class="hint">Fires many genuinely concurrent transaction attempts at one mission's budget — a real attack on the real atomic reservation primitive.</div>
+        <div class="row" style="margin-top:10px">
+          <button id="attackNewMissionBtn" class="secondary">New attack mission ($2,000)</button>
+        </div>
+        <div id="attackMissionInfo" class="hint" style="margin-top:6px">Select an agent (left panel), then create an attack mission.</div>
+        <div class="row" style="margin-top:8px">
+          <button id="attackLaunchBtn">Launch attack (20 × $150)</button>
+        </div>
+        <div class="attackSummary" id="attackSummary" style="display:none">
+          <div class="stat"><div class="value" id="attackStatAttempts">0</div><div class="label">Attempts</div></div>
+          <div class="stat"><div class="value" id="attackStatAllowed">0</div><div class="label">Allowed</div></div>
+          <div class="stat"><div class="value" id="attackStatBlocked">0</div><div class="label">Blocked</div></div>
+          <div class="stat"><div class="value" id="attackStatSpend">$0.00</div><div class="label">Authorized spend</div></div>
+        </div>
+        <div id="attackAttempts"></div>
+        <div id="attackVerified" class="hint" style="margin-top:6px"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Delegation &amp; revocation</h2>
+        <div class="hint">Authority narrows at every level of delegation and can never widen. Revoking a node instantly and provably cuts off everything beneath it.</div>
+        <div class="row" style="margin-top:10px">
+          <button id="revocationRunBtn">Run scenario</button>
+        </div>
+        <div id="chainVisual" class="chainFlow" style="margin-top:10px"></div>
+        <div id="revocationResults"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Ledger integrity</h2>
+        <div class="hint">Every decision is hash-chained and signed. Corrupting stored data directly in the database — bypassing Aegis entirely — is still detected.</div>
+        <div id="integrityStatus" class="integrityBig valid" style="margin-top:10px">✓ HASH CHAIN VERIFIED</div>
+        <div class="row" style="margin-top:10px">
+          <button id="integrityCheckBtn" class="secondary">Verify chain</button>
+          <button id="integrityTamperBtn" class="danger">Tamper latest entry</button>
+        </div>
+        <div id="integrityExplain" class="hint" style="margin-top:8px"></div>
+      </div>
+
+    </div>
   </div>
 </div>
 

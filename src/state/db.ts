@@ -82,6 +82,51 @@ export function openDatabase(path: string = ":memory:"): DatabaseSync {
       created_at TEXT NOT NULL,
       completed_at TEXT
     );
+
+    -- Backs src/state/missions.ts's MissionStore. A mission is bounded metadata layered
+    -- on top of an agent's existing capability token (goal + cumulative budget +
+    -- optional narrower category/counterparty allowlists) — it never grants authority
+    -- itself; the token remains the sole cryptographic boundary. budget_minor_units is
+    -- the cumulative cap the mission was created with; reserved_minor_units tracks
+    -- atomically-reserved-but-not-yet-settled spend (added in a later step, once
+    -- transaction submission is wired up) so concurrent candidate transactions can't
+    -- both pass a stale "remaining budget" read past the cap. allowed_categories and
+    -- approved_counterparties are nullable JSON arrays: null means "no narrowing beyond
+    -- the agent's own token" for that dimension.
+    CREATE TABLE IF NOT EXISTS missions (
+      mission_id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL REFERENCES agents(agent_id),
+      principal_id TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      budget_minor_units INTEGER NOT NULL,
+      currency TEXT NOT NULL,
+      allowed_categories TEXT,
+      approved_counterparties TEXT,
+      reserved_minor_units INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_missions_agent ON missions(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_missions_principal ON missions(principal_id);
+
+    -- Backs src/mission/reservation.ts's crash-recovery reconciliation. Every
+    -- successful reserve() writes a ticket here, in the SAME SQLite transaction as the
+    -- reserved_minor_units increment, keyed by the caller's idempotency scoped_key —
+    -- so a ticket exists if and only if a reservation is currently outstanding for
+    -- that specific transaction attempt. release() deletes its ticket in the same
+    -- transaction as the decrement. If a process dies between reserve() and the
+    -- request's eventual resolution, this ticket is what lets a later process, on
+    -- restart, find every reservation left in limbo and reconcile it against that same
+    -- scoped_key's already-durable idempotency_records state (see
+    -- reconcileMissionReservations) — without ever needing to guess.
+    CREATE TABLE IF NOT EXISTS mission_reservation_tickets (
+      scoped_key TEXT PRIMARY KEY,
+      mission_id TEXT NOT NULL,
+      amount_minor_units INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
   `);
   return db;
 }

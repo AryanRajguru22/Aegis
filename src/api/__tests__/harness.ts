@@ -2,6 +2,7 @@ import { generateRootKeyPair } from "../../capability/index.js";
 import { createInMemoryRevocationStore } from "../../capability/revocation.js";
 import { openDatabase } from "../../state/db.js";
 import { createAgentStore } from "../../state/agents.js";
+import { createMissionStore } from "../../state/missions.js";
 import { createPrincipalStore } from "../../state/principals.js";
 import { createLedgerStore, generateLedgerKeyPair, ledgerPublicKeyToHex } from "../../state/index.js";
 import { createRailRegistry, type RailAdapter, type RailExecutionRequest, type RailExecutionResult } from "../../rails/types.js";
@@ -9,6 +10,7 @@ import type { IntentJudge, IntentJudgeInput, IntentJudgment } from "../../risk/t
 import { createApp } from "../server.js";
 import { wrapWithNotifications } from "../notifyingLedger.js";
 import { createInMemoryIdempotencyCache } from "../idempotency.js";
+import { createSqliteMissionReservationStore } from "../../mission/reservation.js";
 import type { AppDependencies } from "../deps.js";
 
 export class ScriptedIntentJudge implements IntentJudge {
@@ -54,6 +56,8 @@ export function buildHarness(overrides: Partial<AppDependencies> = {}) {
   const stripeRail = new RecordingRailAdapter("stripe_test");
   const rails = createRailRegistry([stripeRail]);
   const idempotency = createInMemoryIdempotencyCache();
+  const missions = createMissionStore(db);
+  const reservations = createSqliteMissionReservationStore(db);
 
   const deps: AppDependencies = {
     rootPrivateKey,
@@ -65,6 +69,8 @@ export function buildHarness(overrides: Partial<AppDependencies> = {}) {
     intentJudge: alwaysConsistentJudge(),
     rails,
     idempotency,
+    missions,
+    reservations,
     judgeTimeoutMs: 500,
     ...overrides,
   };
