@@ -139,7 +139,7 @@ function loadAppJsContext() {
     el: (tag: string, attrs?: Record<string, unknown>, children?: unknown[]) => FakeElement;
     pipelineStage: (label: string, statusWord: string, detailNodes: Array<FakeElement | FakeTextNode>) => FakeElement;
     renderMissionCard: (mission: unknown) => FakeElement;
-    renderMissionHistoryEntry: (missionId: string, event: unknown) => FakeElement;
+    renderMissionHistoryEntry: (missionId: string, missionCurrency: string, event: unknown) => FakeElement;
     renderMissionDetail: (mission: unknown, ledgerEntries: unknown[]) => void;
     selectMissionHistoryEvents: (allEntries: unknown[], missionId: string) => unknown[];
     historyEventToDecisionBody: (event: unknown) => unknown;
@@ -371,9 +371,18 @@ describe("renderMissionHistoryEntry() — every field in a self-contained missio
   test("a mission_policy_verdict (gate denial) entry with a script-shaped reason renders as inert text only", () => {
     const { renderMissionHistoryEntry } = loadAppJsContext();
     const payload = "<script>window.__xss_fired=7</script>";
-    const event = { seq: 5, createdAt: new Date().toISOString(), kind: "mission_policy_verdict", data: { missionId: "mission-1", reason: payload } };
+    // A real mission_policy_verdict entry's data always carries the full submitted
+    // `transaction` and `counterparty` too (see routes/transactions.ts's real write
+    // site) — included here so this fixture matches what the server actually writes,
+    // not just the one field this test cares about.
+    const event = {
+      seq: 5,
+      createdAt: new Date().toISOString(),
+      kind: "mission_policy_verdict",
+      data: { missionId: "mission-1", reason: payload, transaction: { amountMinorUnits: 38_000, currency: "USD", category: "flights", rail: "mock_x402", purpose: "test" }, counterparty: "acme-airlines" },
+    };
 
-    const card = renderMissionHistoryEntry("mission-1", event);
+    const card = renderMissionHistoryEntry("mission-1", "USD", event);
 
     const tags: string[] = [];
     const texts: string[] = [];
@@ -413,7 +422,7 @@ describe("renderMissionHistoryEntry() — every field in a self-contained missio
       },
     };
 
-    const card = renderMissionHistoryEntry("mission-1", event);
+    const card = renderMissionHistoryEntry("mission-1", "USD", event);
 
     const tags: string[] = [];
     const texts: string[] = [];
@@ -444,7 +453,7 @@ describe("renderMissionHistoryEntry() — every field in a self-contained missio
       },
     };
 
-    const card = renderMissionHistoryEntry("mission-1", event);
+    const card = renderMissionHistoryEntry("mission-1", "USD", event);
 
     const tags: string[] = [];
     const texts: string[] = [];
@@ -476,7 +485,17 @@ describe("renderMissionDetail() — the full mission detail view never becomes D
       expiresAt: new Date().toISOString(),
     };
     const ledgerEntries = [
-      { seq: 1, createdAt: new Date().toISOString(), kind: "mission_policy_verdict", data: { missionId: "mission-1", reason: reasonPayload } },
+      {
+        seq: 1,
+        createdAt: new Date().toISOString(),
+        kind: "mission_policy_verdict",
+        // A real mission_policy_verdict entry's data always carries the full
+        // submitted `transaction` and `counterparty` too (see routes/transactions.ts's
+        // real write site) — included here so this fixture matches what the server
+        // actually writes, since renderMissionDetail -> renderMissionHistoryEntry now
+        // reads them to render the real submitted-amount context line.
+        data: { missionId: "mission-1", reason: reasonPayload, transaction: { amountMinorUnits: 38_000, currency: "USD", category: "flights", rail: "mock_x402", purpose: "test" }, counterparty: "acme-airlines" },
+      },
     ];
 
     context.renderMissionDetail(mission, ledgerEntries);

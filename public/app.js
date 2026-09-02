@@ -18,7 +18,56 @@ let state = {
   missions: [],
   viewingMissionId: null,
   viewingMission: null, // the full mission object last fetched by viewMissionDetail(), or null — read by renderAuthorityFlow() to extend the flow with the mission's budget, only when it belongs to the active agent.
+  activeWorkspace: "Overview",
+  lastDecision: null, // { verdict, reason } from the most recent real Simulate/Execute response — read by renderOverview(), never re-derived.
 };
+
+// ---------- Block 4A: one-time "moment of truth" success pulse ----------
+// Tracks whether each specific moment-of-truth box has EVER shown a genuine success
+// on this page load — the pulse (see .integrityBig.pulse in index.html) fires only
+// the first time, never on every re-check/re-run, so it stays a real moment instead
+// of becoming background noise. Denial states get no equivalent animation at all —
+// see checkIntegrity()/launchBudgetAttack() below.
+let integrityPulsedOnce = false;
+let attackZeroOverspendPulsedOnce = false;
+
+// ---------- Block 4A: mission remaining-budget count-up ----------
+// The single most important number during the mission/race section. Tweens ONLY
+// when re-rendering the SAME mission with a value that has genuinely changed (e.g.
+// after a real transaction settles) — a first-ever view of a mission, or switching
+// to a DIFFERENT mission, always renders the real number immediately/statically,
+// never tweening between two unrelated missions' unrelated budgets. Every
+// intermediate frame is a pure display interpolation between two real,
+// already-server-confirmed endpoints — never an invented value — and always lands
+// exactly on the true final figure. Falls back to an immediate, static render
+// wherever requestAnimationFrame isn't available (e.g. the node:vm dashboard-test
+// sandbox), so this can never throw or hang a test, and can never show a wrong
+// number even transiently in an environment that can't animate at all.
+let lastMissionBudgetShown = null; // { missionId, remainingMinorUnits, currency }
+let missionBudgetTweenToken = 0;
+
+function renderBudgetHeroLine(el_, remainingMinorUnits, currency) {
+  el_.textContent = `${fmtMoney(remainingMinorUnits, currency)} remaining`;
+}
+
+function tweenBudgetHeroLine(el_, fromMinorUnits, toMinorUnits, currency, durationMs = 450) {
+  if (typeof requestAnimationFrame !== "function") {
+    renderBudgetHeroLine(el_, toMinorUnits, currency);
+    return;
+  }
+  const myToken = ++missionBudgetTweenToken;
+  const start = Date.now();
+  const step = () => {
+    if (myToken !== missionBudgetTweenToken) return; // superseded by a newer render — abandon this tween, never fight over the DOM
+    const elapsed = Date.now() - start;
+    const t = Math.min(1, elapsed / durationMs);
+    const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
+    const current = Math.round(fromMinorUnits + (toMinorUnits - fromMinorUnits) * eased);
+    renderBudgetHeroLine(el_, current, currency);
+    if (t < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
 
 // ---------- helpers ----------
 
@@ -96,6 +145,52 @@ function stageStatusClass(word) {
   if (word === "deny" || word === "inconsistent" || word === "unavailable") return "deny";
   if (word === "escalate" || word === "ambiguous") return "escalate";
   return "gray";
+}
+
+// ---------- Block 4A: unified motion/state system ----------
+// ONE reusable stagger primitive, reused by the pipeline trace, the attack-theatre
+// trace, and Authority Flow — never a separate animation system per region. Every
+// element passed here has ALREADY been appended to its real, final DOM position by
+// the caller (structure/timing is fully synchronous, matching every other render
+// function in this file) — this only adds a CSS class + an inline animation-delay,
+// so the node:vm-based dashboard tests (which never execute CSS/animations at all)
+// see an identical final DOM to before this existed.
+/**
+ * A brief, extremely faint whole-page tint toward the real allow/deny color —
+ * background atmosphere responding to an actual moment of truth, never a fabricated
+ * one. Called only at the same three real verdict points this file already treats as
+ * "moment of truth" elsewhere (a live Execute, a ledger verify, an attack's final
+ * server-confirmed overspend check) — never for historical/replayed results, never
+ * per attack-attempt row. Avoids classList (not present on the fake DOM the
+ * node:vm-based dashboard tests use) and feature-detects setTimeout the same way
+ * scheduleReveal() does, so this can never throw in that sandbox — it just leaves the
+ * tint in its last state, which no test asserts on.
+ */
+let bgPulseToken = 0;
+function pulseAtmosphere(kind) {
+  const el_ = document.getElementById("bgPulse");
+  if (!el_) return;
+  const myToken = ++bgPulseToken;
+  el_.style.color = kind === "deny" ? "var(--deny)" : kind === "escalate" ? "var(--escalate)" : "var(--allow)";
+  el_.className = "show";
+  if (typeof setTimeout === "function") {
+    setTimeout(() => {
+      // Same stale-timer guard as envSignalTo() below — several real "moment of
+      // truth" events within 900ms of each other must never let an earlier one's
+      // timer erase a later one's still-fresh tint.
+      if (myToken === bgPulseToken) el_.className = "";
+    }, 900);
+  }
+}
+
+function staggerReveal(elements, stepMs = 150) {
+  let i = 0;
+  for (const elem of elements) {
+    if (!elem || elem.nodeType === 3) continue; // skip text nodes / falsy entries
+    elem.className = elem.className ? `${elem.className} reveal` : "reveal";
+    elem.style.animationDelay = `${i * stepMs}ms`;
+    i++;
+  }
 }
 
 function pipelineStage(label, statusWord, detailNodes) {
@@ -191,13 +286,23 @@ function renderAgentTree() {
   if (state.agents.length === 0) {
     container.appendChild(el("div", { class: "hint", text: "No agents yet — create a root agent below." }));
   }
+  // Block 4B: same reusable stagger as everywhere else, just snappier — a tree can
+  // have many nodes and this should read as "settled quickly", not a slow cascade.
+  staggerReveal(container.childNodes, 60);
 }
 
 function renderAgentNode(agent, depth) {
-  const node = el("div", { class: `agentNode${agent.agentId === state.activeAgentId ? " active" : ""}` });
+  const isRoot = depth === 0;
+  // Block 4B: root vs delegated gets its own left-border color (the same
+  // hierarchy/status vocabulary .stage-*/`.chainNode` already use elsewhere) and the
+  // SAME role label Authority Flow already uses for the identical distinction — the
+  // tree answers "who delegated to whom", Authority Flow answers "what authority was
+  // actually inherited/narrowed", using consistent wording between the two.
+  const node = el("div", { class: `agentNode ${isRoot ? "root" : "delegated"}${agent.agentId === state.activeAgentId ? " active" : ""}` });
   node.style.marginLeft = `${depth * 14}px`;
 
   const hasToken = Boolean(loadTokens()[agent.agentId]);
+  node.appendChild(el("div", { class: "chainRole", text: isRoot ? "Agent authority" : "Delegated (attenuated)" }));
   node.appendChild(el("div", { class: "id", text: agent.agentId + (hasToken ? "" : "  (no local token)") }));
   node.appendChild(el("div", { class: "goal", text: agent.delegatedGoal }));
   node.appendChild(
@@ -334,15 +439,35 @@ function authorityLineage(agentId) {
   return lineage;
 }
 
-/** `heroId`, when true, renders idText at the hero type scale (Day 1, Block 2) — used only for the LIVE BUDGET stage's headline figure, the single most important number in the flow. Every other stage keeps its existing, unchanged size. */
-function authorityStage(role, idText, detailText, heroId) {
+/** `heroId`, when true, renders idText at the hero type scale — used only for the LIVE BUDGET stage's headline figure, the single most important number in the flow. Every other stage keeps its existing, unchanged size. */
+function authorityStage(role, idText, detailText, heroId, diffText) {
   const node = el("div", { class: "chainNode" });
   node.appendChild(
     el("div", { class: "chainTop" }, [el("span", { class: "chainRole", text: role })])
   );
   node.appendChild(el("div", { class: heroId ? "heroLine" : "chainId", text: idText }));
   node.appendChild(el("div", { class: "chainCaveats", text: detailText }));
+  if (diffText) node.appendChild(el("div", { class: "narrowDiff", text: diffText }));
   return node;
+}
+
+/**
+ * What narrowed between a parent's caveats and its immediate child's — computed
+ * ONLY from the two real caveat objects already held in state (never re-derived,
+ * never invented). Returns null when there's nothing to show (a legally equal-bounds
+ * attenuation narrows nothing). amountDelta is only included when strictly positive
+ * — validateAttenuation never permits a widening, so this can never be negative.
+ */
+function computeCaveatDiff(parentCaveats, childCaveats) {
+  const amountDelta = parentCaveats.maxAmountMinorUnits - childCaveats.maxAmountMinorUnits;
+  const removedCategories = parentCaveats.categories.filter((c) => !childCaveats.categories.includes(c));
+  const removedRails = parentCaveats.rails.filter((r) => !childCaveats.rails.includes(r));
+  if (amountDelta <= 0 && removedCategories.length === 0 && removedRails.length === 0) return null;
+  const parts = [];
+  if (amountDelta > 0) parts.push(`-${fmtMoney(amountDelta, childCaveats.currency)}`);
+  for (const c of removedCategories) parts.push(`-${c}`);
+  for (const r of removedRails) parts.push(`-${r}`);
+  return parts.join(" · ");
 }
 
 function renderAuthorityFlow() {
@@ -363,10 +488,13 @@ function renderAuthorityFlow() {
   const flow = el("div", { class: "chainFlow" });
   lineage.forEach((agent, i) => {
     if (i > 0) flow.appendChild(el("div", { class: "chainArrow", text: "↓" }));
-    const role = i === 0 ? "AGENT AUTHORITY" : "DELEGATED (ATTENUATED)";
+    const role = i === 0 ? "Agent authority" : "Delegated (attenuated)";
     const idText = agent.agentId + (agent.agentId === state.activeAgentId && lineage.length > 1 ? " (selected)" : "");
     const detail = `cap ${fmtMoney(agent.caveats.maxAmountMinorUnits, agent.caveats.currency)} · ${agent.caveats.categories.join(",")} · ${agent.caveats.rails.join(",")}`;
-    flow.appendChild(authorityStage(role, idText, detail));
+    // What narrowed at exactly this step, versus its immediate parent — computed
+    // only from the two real caveat objects already in the lineage, never invented.
+    const diffText = i > 0 ? computeCaveatDiff(lineage[i - 1].caveats, agent.caveats) : null;
+    flow.appendChild(authorityStage(role, idText, detail, false, diffText));
   });
 
   const mission = state.viewingMission;
@@ -374,7 +502,7 @@ function renderAuthorityFlow() {
     flow.appendChild(el("div", { class: "chainArrow", text: "↓" }));
     flow.appendChild(
       authorityStage(
-        "MISSION BOUNDARY",
+        "Mission boundary",
         mission.missionId,
         `budget ${fmtMoney(mission.budgetMinorUnits, mission.currency)} · ${mission.allowedCategories ? mission.allowedCategories.join(",") : "(same as agent token)"} · ${mission.approvedCounterparties ? mission.approvedCounterparties.join(",") : "(unrestricted)"}`
       )
@@ -382,7 +510,7 @@ function renderAuthorityFlow() {
     flow.appendChild(el("div", { class: "chainArrow", text: "↓" }));
     flow.appendChild(
       authorityStage(
-        "LIVE BUDGET",
+        "Live budget",
         `${fmtMoney(mission.remainingMinorUnits, mission.currency)} remaining`,
         `spent ${fmtMoney(mission.spentMinorUnits, mission.currency)} · reserved ${fmtMoney(mission.reservedMinorUnits, mission.currency)} · of ${fmtMoney(mission.budgetMinorUnits, mission.currency)} budget`,
         true
@@ -391,13 +519,15 @@ function renderAuthorityFlow() {
   }
 
   container.appendChild(flow);
-  container.appendChild(
-    el("div", { class: "narrowTagline" }, [
-      el("span", { class: "can", text: "AUTHORITY CAN NARROW" }),
-      document.createTextNode(" · "),
-      el("span", { class: "cannot", text: "AUTHORITY CANNOT WIDEN" }),
-    ])
-  );
+  const tagline = el("div", { class: "narrowTagline" }, [
+    el("span", { class: "can", text: "AUTHORITY CAN NARROW" }),
+    document.createTextNode(" · "),
+    el("span", { class: "cannot", text: "AUTHORITY CANNOT WIDEN" }),
+  ]);
+  container.appendChild(tagline);
+  // Same reusable stagger as the pipeline trace — narrows visually cascade downward
+  // in the same order the real caveats actually narrow, ending on the tagline.
+  staggerReveal([...flow.childNodes, tagline]);
 }
 
 // ---------- transactions ----------
@@ -432,18 +562,32 @@ function currentTransaction() {
 // downstream of the gate ever ran); for an ALLOWED mission-scoped transaction the
 // full existing pipeline still runs exactly as before, so this is the only way the
 // renderer can show the "Mission" stage passed.
+// options.txSummary: { amountMinorUnits, currency, category, counterparty } — the
+// exact real values this specific attempt was submitted with. For a live
+// Simulate/Execute click these come straight from the form fields that were just
+// submitted (see the click handlers below); for a historical mission entry they come
+// straight from that entry's own ledger data (see historyEventToDecisionBody) — never
+// invented, never re-derived from anything else.
 function renderDecisionResult(container, body, options = {}) {
   container.innerHTML = ""; // clearing only — never used to insert untrusted content
   if (!body) return;
   const { decision, execution } = body;
   const missionLabel = options.missionId ? `Mission (${options.missionId})` : "Mission";
 
-  const top = el("div", {}, [verdictBadge(decision.verdict), el("span", { text: " " + decision.reason })]);
-  top.style.display = "flex";
-  top.style.alignItems = "center";
-  top.style.gap = "8px";
-  top.style.marginBottom = "10px";
+  // The verdict is the answer; the context line under it is what was actually
+  // submitted; the pipeline below is the evidence for the verdict. Reading top to
+  // bottom: what happened, to what, why — without narration.
+  const top = el("div", { class: "verdictLine" }, [verdictBadge(decision.verdict), el("span", { text: " " + decision.reason })]);
   container.appendChild(top);
+
+  if (options.txSummary) {
+    const s = options.txSummary;
+    container.appendChild(
+      el("div", { class: "txContext" }, [
+        document.createTextNode(`${fmtMoney(s.amountMinorUnits, s.currency)} · ${s.category} · ${s.counterparty}`),
+      ])
+    );
+  }
 
   const pipeline = el("div", { class: "pipeline" });
 
@@ -452,6 +596,7 @@ function renderDecisionResult(container, body, options = {}) {
     // ever ran — nothing downstream exists to show.
     pipeline.appendChild(pipelineStage(missionLabel, "deny", [el("span", { text: decision.reason })]));
     container.appendChild(pipeline);
+    staggerReveal(pipeline.childNodes);
     return;
   }
 
@@ -486,6 +631,11 @@ function renderDecisionResult(container, body, options = {}) {
   }
 
   container.appendChild(pipeline);
+  // Presentation only — every stage above was already appended synchronously, in the
+  // real, unmodified order the pipeline actually ran in; this only staggers how fast
+  // they visually fade in, ~150ms apart, so a viewer watches the request travel
+  // through the pipeline instead of seeing a wall of text appear at once.
+  staggerReveal(pipeline.childNodes);
 }
 
 /** The one place an error message reaches the DOM — always as literal text, never markup, since err.message can carry API-echoed user input (e.g. a rejected agentId). */
@@ -524,15 +674,18 @@ document.getElementById("simulateBtn").addEventListener("click", async () => {
   }
   const missionId = selectedMissionId();
   const counterparty = document.getElementById("txCounterparty").value.trim();
+  const txn = currentTransaction();
   try {
-    const body = { transaction: currentTransaction() };
+    const body = { transaction: txn };
     if (missionId) {
       body.missionId = missionId;
       body.counterparty = counterparty; // required by /simulate only when a mission is attached
     }
     const res = await api("/simulate", { method: "POST", auth: token, body });
     if (requestId !== latestResultRequestId) return; // a newer Simulate/Execute click has since started — this response is stale
-    renderDecisionResult(resultEl, res, { missionUsed: Boolean(missionId), missionId });
+    const txSummary = { amountMinorUnits: txn.amountMinorUnits, currency: txn.currency, category: txn.category, counterparty };
+    renderDecisionResult(resultEl, res, { missionUsed: Boolean(missionId), missionId, txSummary });
+    state.lastDecision = { verdict: res.decision.verdict, reason: res.decision.reason };
   } catch (err) {
     if (requestId !== latestResultRequestId) return; // stale — a newer click already owns the panel
     renderError(resultEl, err.message);
@@ -549,8 +702,9 @@ document.getElementById("executeBtn").addEventListener("click", async () => {
   }
   const missionId = selectedMissionId();
   const counterparty = document.getElementById("txCounterparty").value.trim();
+  const txn = currentTransaction();
   try {
-    const body = { transaction: currentTransaction(), counterparty };
+    const body = { transaction: txn, counterparty };
     if (missionId) body.missionId = missionId;
     const res = await api("/transactions", {
       method: "POST",
@@ -559,8 +713,19 @@ document.getElementById("executeBtn").addEventListener("click", async () => {
       body,
     });
     if (requestId !== latestResultRequestId) return; // a newer Simulate/Execute click has since started — this response is stale
-    renderDecisionResult(resultEl, res, { missionUsed: Boolean(missionId), missionId });
+    const txSummary = { amountMinorUnits: txn.amountMinorUnits, currency: txn.currency, category: txn.category, counterparty };
+    renderDecisionResult(resultEl, res, { missionUsed: Boolean(missionId), missionId, txSummary });
+    state.lastDecision = { verdict: res.decision.verdict, reason: res.decision.reason };
+    // A real execute (not a Simulate dry-run) is one of the three moments this file
+    // treats as "moment of truth" — see pulseAtmosphere()'s own doc comment. The
+    // environment glow reacts to the real verdict the pipeline actually reached —
+    // see decisionReachFraction()'s comment for exactly how that's derived (allow,
+    // deny, or the real escalate verdict the risk stage can genuinely return).
+    const reach = decisionReachFraction(res);
+    pulseAtmosphere(reach.kind);
+    envSignalTo(reach.fraction, reach.kind);
     if (missionId) await loadMissions(); // refresh budget/spent/reserved figures after a mission-scoped attempt — always reflects real server state, independent of #result staleness
+    refreshLedger(); // keeps the shell's status chip and the Evidence workspace honest after a real state change, not just after boot or an explicit Refresh click
   } catch (err) {
     if (requestId !== latestResultRequestId) return; // stale — a newer click already owns the panel
     renderError(resultEl, err.message);
@@ -593,14 +758,32 @@ function populateMissionAgentSelect() {
   if (state.agents.some((a) => a.agentId === previous)) select.value = previous;
 }
 
-/** The optional Mission dropdown on the transaction form only ever offers ACTIVE missions belonging to the currently selected agent — an agent can't accidentally submit against another agent's mission or a closed one from the UI (the API enforces this regardless; this is just not offering a doomed option). */
+/**
+ * The optional Mission dropdown on the transaction form only ever offers ACTIVE
+ * missions belonging to the currently selected agent — an agent can't accidentally
+ * submit against another agent's mission or a closed one from the UI (the API
+ * enforces this regardless; this is just not offering a doomed option).
+ *
+ * Preserves the current selection across a rebuild (same pattern as
+ * populateMissionAgentSelect() above) — this select is rebuilt after every
+ * mission-scoped transaction (see the executeBtn handler's loadMissions() call), and
+ * without this a rebuilt <select> silently defaults back to its first option
+ * ("None"), which used to make a second transaction against the same mission
+ * require re-selecting it by hand. Only restores the value if it's STILL a real,
+ * active mission belonging to the currently active agent — never blindly restores a
+ * stale selection.
+ */
 function populateTxMissionSelect() {
   const select = document.getElementById("txMission");
+  const previous = select.value;
   select.innerHTML = "";
   select.appendChild(el("option", { value: "", text: "None — use the agent's standing authority" }));
   for (const m of state.missions) {
     if (m.agentId !== state.activeAgentId || m.status !== "active") continue;
     select.appendChild(el("option", { value: m.missionId, text: `${m.missionId} — ${m.goal.slice(0, 60)}` }));
+  }
+  if (state.missions.some((m) => m.missionId === previous && m.agentId === state.activeAgentId && m.status === "active")) {
+    select.value = previous;
   }
 }
 
@@ -742,12 +925,36 @@ function historyEventToDecisionBody(event) {
   return { decision, execution: d.execution };
 }
 
-function renderMissionHistoryEntry(missionId, event) {
+/**
+ * The real submitted amount/category/counterparty for one history entry — read
+ * directly from that entry's own ledger data, never invented. The two mission-tagged
+ * kinds carry this differently (mission_policy_verdict nests a full `transaction`
+ * object with its own currency; mission_pipeline_outcome carries these fields flat,
+ * with no currency field of its own — see src/mission/ledger.ts's
+ * MissionPipelineOutcomeData), so `missionCurrency` (the containing mission's own
+ * real currency, already known by the caller) is the correct, real source for that
+ * one case, not a guess.
+ */
+function historyEventToTxSummary(event, missionCurrency) {
+  const d = event.data;
+  if (event.kind === "mission_policy_verdict") {
+    // Every entry the real server writes includes `transaction`/`counterparty` here
+    // (see routes/transactions.ts) — this guard is defense-in-depth only, so an
+    // unexpected/malformed entry degrades to "no context line" rather than crashing
+    // the whole mission detail view, matching this codebase's fail-safe-not-crash
+    // posture elsewhere (e.g. the verifier's own malformed-entry handling).
+    if (!d.transaction) return null;
+    return { amountMinorUnits: d.transaction.amountMinorUnits, currency: d.transaction.currency, category: d.transaction.category, counterparty: d.counterparty };
+  }
+  return { amountMinorUnits: d.amountMinorUnits, currency: missionCurrency, category: d.category, counterparty: d.counterparty };
+}
+
+function renderMissionHistoryEntry(missionId, missionCurrency, event) {
   const wrapper = el("div", { class: "card" });
   wrapper.appendChild(el("div", { class: "top" }, [el("span", { class: "kind", text: `#${event.seq}` }), el("span", { class: "time", text: fmtTime(event.createdAt) })]));
   const body = el("div", {});
   wrapper.appendChild(body);
-  renderDecisionResult(body, historyEventToDecisionBody(event), { missionUsed: true, missionId });
+  renderDecisionResult(body, historyEventToDecisionBody(event), { missionUsed: true, missionId, txSummary: historyEventToTxSummary(event, missionCurrency) });
   return wrapper;
 }
 
@@ -773,23 +980,76 @@ function renderMissionDetail(mission, ledgerEntries) {
   container.innerHTML = "";
 
   container.appendChild(el("h3", { text: mission.missionId }));
-  container.appendChild(el("div", { class: "top" }, [el("span", { class: `badge ${statusBadgeClass(mission.status)}`, text: mission.status })]));
-  container.appendChild(el("div", { class: "goal", text: mission.goal, style: "margin:8px 0" }));
-  // Hero treatment (Block 3B) for the one figure that matters most here — the SAME
-  // .heroLine class and "$X remaining" / "spent Y · reserved Z · of W budget" phrasing
-  // Authority Flow's LIVE BUDGET stage already uses (see authorityStage() above), not
-  // a new component or new wording.
-  container.appendChild(el("div", { class: "heroLine", text: `${fmtMoney(mission.remainingMinorUnits, mission.currency)} remaining` }));
+  // Identity right under the mission's own name — who owns it, what state it's in
+  // — before anything about its objective or its money, matching the same
+  // "identity, then constraints" order the rest of the app already uses (an agent
+  // card shows its own id before its caveats; a transaction result shows the
+  // verdict before the pipeline that produced it).
   container.appendChild(
-    el("div", { class: "hint", style: "margin-top:2px" }, [
-      document.createTextNode(
-        `spent ${fmtMoney(mission.spentMinorUnits, mission.currency)} · reserved ${fmtMoney(mission.reservedMinorUnits, mission.currency)} · of ${fmtMoney(mission.budgetMinorUnits, mission.currency)} budget`
-      ),
+    el("div", { class: "missionIdentityLine" }, [
+      el("span", { class: `badge ${statusBadgeClass(mission.status)}`, text: mission.status }),
+      document.createTextNode(" "),
+      el("span", { class: "missionAgentRef", text: mission.agentId }),
     ])
   );
-  container.appendChild(el("div", { class: "hint", text: `agent: ${mission.agentId}` }));
-  container.appendChild(el("div", { class: "hint", text: `categories: ${mission.allowedCategories ? mission.allowedCategories.join(", ") : "(same as agent token)"}` }));
-  container.appendChild(el("div", { class: "hint", text: `approved counterparties: ${mission.approvedCounterparties ? mission.approvedCounterparties.join(", ") : "(unrestricted)"}` }));
+  container.appendChild(el("div", { class: "goal", text: mission.goal }));
+
+  // Block 4B: the budget picture (the number the whole race/attack story is about)
+  // gets its own visually distinct block, separate from static configuration below —
+  // MISSION -> PURPOSE -> AUTHORITY BOUNDARY -> BUDGET/SPEND/REMAINING, with
+  // REMAINING staying the dominant figure exactly as before (Block 3B's .heroLine).
+  const budgetBlock = el("div", { class: "missionBudgetBlock" });
+  const heroLineEl = el("div", { class: "heroLine" });
+  budgetBlock.appendChild(heroLineEl);
+  // Block 4A: tween only when re-rendering the SAME mission with a genuinely
+  // different value (e.g. a transaction just settled against it) — a first-ever
+  // view, or an unchanged value, always renders immediately/statically.
+  if (
+    lastMissionBudgetShown &&
+    lastMissionBudgetShown.missionId === mission.missionId &&
+    lastMissionBudgetShown.remainingMinorUnits !== mission.remainingMinorUnits
+  ) {
+    tweenBudgetHeroLine(heroLineEl, lastMissionBudgetShown.remainingMinorUnits, mission.remainingMinorUnits, mission.currency);
+  } else {
+    renderBudgetHeroLine(heroLineEl, mission.remainingMinorUnits, mission.currency);
+  }
+  lastMissionBudgetShown = { missionId: mission.missionId, remainingMinorUnits: mission.remainingMinorUnits, currency: mission.currency };
+  // Spelled-out arithmetic, not just the final figure — the same three real numbers
+  // the hero line and the fill bar already use (budget, settled, reserved), just
+  // shown as the actual subtraction rather than a single dense sentence.
+  const mathLine = el("div", { class: "budgetMath" });
+  mathLine.appendChild(document.createTextNode(fmtMoney(mission.budgetMinorUnits, mission.currency)));
+  mathLine.appendChild(el("span", { class: "op", text: " budget " }));
+  mathLine.appendChild(el("span", { class: "op", text: "− " }));
+  mathLine.appendChild(document.createTextNode(fmtMoney(mission.spentMinorUnits, mission.currency)));
+  mathLine.appendChild(el("span", { class: "op", text: " settled" }));
+  if (mission.reservedMinorUnits > 0) {
+    mathLine.appendChild(el("span", { class: "op", text: " − " }));
+    mathLine.appendChild(document.createTextNode(fmtMoney(mission.reservedMinorUnits, mission.currency)));
+    mathLine.appendChild(el("span", { class: "op", text: " reserved" }));
+  }
+  mathLine.appendChild(el("span", { class: "op", text: " = " }));
+  mathLine.appendChild(document.createTextNode(`${fmtMoney(mission.remainingMinorUnits, mission.currency)} remaining`));
+  budgetBlock.appendChild(mathLine);
+  // A real, non-decorative fill — the same .budgetBar component the attack theatre
+  // already uses, driven by this mission's own real committed spend (settled +
+  // reserved) against its own real budget. Never a second, invented figure.
+  const committedMinorUnits = mission.spentMinorUnits + mission.reservedMinorUnits;
+  const barPct = mission.budgetMinorUnits > 0 ? Math.min(100, (committedMinorUnits / mission.budgetMinorUnits) * 100) : 0;
+  const barFill = el("div", { class: committedMinorUnits > mission.budgetMinorUnits ? "fill overspend" : "fill" });
+  barFill.style.width = `${barPct}%`;
+  budgetBlock.appendChild(el("div", { class: "budgetBar" }, [barFill]));
+  container.appendChild(budgetBlock);
+
+  container.appendChild(
+    el("div", { class: "missionAuthorityLine" }, [
+      el("span", { class: "chainRole", text: "Authority boundary" }),
+      document.createElement("br"),
+      document.createTextNode(`categories: ${mission.allowedCategories ? mission.allowedCategories.join(", ") : "(same as agent token)"}`),
+      document.createElement("br"),
+      document.createTextNode(`approved counterparties: ${mission.approvedCounterparties ? mission.approvedCounterparties.join(", ") : "(unrestricted)"}`),
+    ])
+  );
   container.appendChild(el("div", { class: "hint", text: `expires ${new Date(mission.expiresAt).toLocaleString()}` }));
 
   const historyContainer = el("div", { id: "missionHistory" });
@@ -797,7 +1057,7 @@ function renderMissionDetail(mission, ledgerEntries) {
   if (history.length === 0) {
     historyContainer.appendChild(el("div", { class: "hint", text: "No transactions attempted under this mission yet." }));
   } else {
-    for (const event of history) historyContainer.appendChild(renderMissionHistoryEntry(mission.missionId, event));
+    for (const event of history) historyContainer.appendChild(renderMissionHistoryEntry(mission.missionId, mission.currency, event));
   }
   container.appendChild(historyContainer);
 }
@@ -898,11 +1158,408 @@ async function refreshLedger() {
         el("div", { class: "top" }, [el("span", { class: "kind", text: `#${entry.seq} ${entry.kind}` }), el("span", { class: "time", text: fmtTime(entry.createdAt) })])
       );
       row.appendChild(el("div", { class: "hash", text: `hash ${truncHash(entry.contentHash)} ← prev ${truncHash(entry.prevHash)}` }));
+      if (entry.signature) row.appendChild(el("div", { class: "hash", text: `sig ${truncHash(entry.signature)}` }));
       listEl.appendChild(row);
     }
+    updateShellStatus(res.chainValid, res.entries.length);
   } catch (err) {
     statusEl.className = "invalid";
     statusEl.textContent = err.message;
+    updateShellStatus(false, null);
+  }
+}
+
+/** Mirrors the ledger's own real, just-fetched status into the persistent shell's
+ * small status chip — never a second, independently-computed value. */
+function updateShellStatus(chainValid, entryCount) {
+  const chip = document.getElementById("shellStatus");
+  const text = document.getElementById("shellStatusText");
+  if (!chip || !text) return;
+  chip.className = `shellStatus ${chainValid ? "valid" : "invalid"}`;
+  text.textContent = chainValid ? `Ledger verified${entryCount != null ? ` · ${entryCount}` : ""}` : "Ledger tampered";
+}
+
+// ---------- workspaces (Block 6) ----------
+// A persistent shell around six named workspaces. Every workspace reuses the exact
+// same elements and render functions that previously sat on one long page — this
+// only changes which of them is currently visible, never what they show or how they
+// compute it. Looked up purely by fixed element id (never querySelectorAll/dataset),
+// matching every other DOM access in this file and staying safe inside the node:vm
+// dashboard-test sandbox, whose fake document only implements getElementById.
+
+const WORKSPACES = ["Overview", "Authority", "Missions", "Transactions", "Security", "Evidence"];
+
+function showWorkspace(name) {
+  const normalized = WORKSPACES.find((w) => w.toLowerCase() === String(name).toLowerCase()) || "Overview";
+  for (const w of WORKSPACES) {
+    const section = document.getElementById(`ws${w}`);
+    const navBtn = document.getElementById(`nav${w}`);
+    if (section) section.className = w === normalized ? "workspace active" : "workspace";
+    if (navBtn) navBtn.className = w === normalized ? "navBtn active" : "navBtn";
+  }
+  state.activeWorkspace = normalized;
+  if (normalized === "Overview") renderOverview();
+  envWorkspaceShift(normalized);
+}
+
+function initWorkspaceNav() {
+  for (const w of WORKSPACES) {
+    const btn = document.getElementById(`nav${w}`);
+    if (btn) btn.addEventListener("click", () => showWorkspace(w));
+  }
+  // Overview's facts are entry points, not dead ends — clicking one takes you to the
+  // workspace that actually owns that data.
+  const gotoMap = { ovGotoAuthority: "Authority", ovGotoMission: "Missions", ovGotoBudget: "Missions", ovGotoDecision: "Transactions", ovGotoLedger: "Evidence" };
+  for (const [id, target] of Object.entries(gotoMap)) {
+    const target_ = document.getElementById(id);
+    if (target_) target_.addEventListener("click", () => showWorkspace(target));
+  }
+}
+
+/**
+ * Progressive-disclosure "ⓘ" controls (public/index.html's .infoControl/.infoBtn/
+ * .infoPopover) — a short line stays permanently visible in the markup; clicking,
+ * tapping, or keyboard-focusing the button next to it reveals the fuller
+ * explanation. Hover works too, for free, via CSS (:hover/:focus-within) — this
+ * function only handles the parts CSS can't: click/tap toggling a *persistent* open
+ * state (so touch users aren't relying on hover at all), closing other open
+ * popovers when a new one opens, closing on outside click or Escape, and nudging a
+ * popover that would run off the right edge of the viewport back on-screen.
+ *
+ * Only called from boot() — never at module load time — so it's safe to use
+ * document.querySelectorAll/addEventListener here even though the node:vm
+ * dashboard-test sandbox's fake document doesn't implement them; boot() is never
+ * invoked in that sandbox (confirmed: it only runs after a real sign-in, and the
+ * tests never simulate one). The typeof guards below are extra insurance, not the
+ * primary safety mechanism.
+ */
+function initInfoControls() {
+  if (typeof document.querySelectorAll !== "function" || typeof document.addEventListener !== "function") return;
+
+  const openControls = () => Array.from(document.querySelectorAll(".infoControl.open"));
+  const closeControl = (control) => {
+    control.className = control.className.replace(/\bopen\b/, "").trim();
+    const btn = control.querySelector(".infoBtn");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  };
+  const positionPopover = (control) => {
+    const popover = control.querySelector(".infoPopover");
+    if (!popover || typeof popover.getBoundingClientRect !== "function") return;
+    popover.className = popover.className.replace(/\bflip-right\b/, "").trim();
+    const rect = popover.getBoundingClientRect();
+    if (typeof window !== "undefined" && rect.right > window.innerWidth - 12) {
+      popover.className = `${popover.className} flip-right`.trim();
+    }
+  };
+
+  document.addEventListener(
+    "focusin",
+    (evt) => {
+      const control = evt.target.closest ? evt.target.closest(".infoControl") : null;
+      if (control) positionPopover(control);
+    },
+    true
+  );
+  // mouseover (bubbles) rather than mouseenter (doesn't) so one delegated listener
+  // covers every current and future .infoControl — the hover reveal itself is pure
+  // CSS (:hover), this only makes sure a hover-revealed popover near the right edge
+  // gets the same off-screen correction the click/focus paths already get.
+  document.addEventListener("mouseover", (evt) => {
+    const control = evt.target.closest ? evt.target.closest(".infoControl") : null;
+    if (control) positionPopover(control);
+  });
+
+  document.addEventListener("click", (evt) => {
+    const btn = evt.target.closest ? evt.target.closest(".infoBtn") : null;
+    if (btn) {
+      evt.preventDefault();
+      const control = btn.closest(".infoControl");
+      if (!control) return;
+      const isOpen = / open(\s|$)/.test(` ${control.className} `);
+      for (const other of openControls()) if (other !== control) closeControl(other);
+      if (isOpen) {
+        closeControl(control);
+      } else {
+        control.className = `${control.className} open`.trim();
+        btn.setAttribute("aria-expanded", "true");
+        positionPopover(control);
+      }
+      return;
+    }
+    // A click anywhere else (including inside an open popover's own text) closes
+    // any popover that was opened by click/tap rather than by hover.
+    if (!evt.target.closest || !evt.target.closest(".infoPopover")) {
+      for (const other of openControls()) closeControl(other);
+    }
+  });
+
+  document.addEventListener("keydown", (evt) => {
+    if (evt.key === "Escape") {
+      for (const control of openControls()) closeControl(control);
+    }
+  });
+}
+
+/**
+ * A small set of real facts pulled from state already populated elsewhere
+ * (loadAgents/loadMissions/simulate-execute) — never a second, independent fetch
+ * that could disagree with what the owning workspace shows. Ledger integrity is the
+ * one exception worth calling out: it mirrors refreshLedger()'s own just-fetched
+ * #chainStatus text/class rather than re-deriving anything, so Overview and Evidence
+ * can never show two different answers to the same real question.
+ */
+function renderOverview() {
+  const agent = state.agents.find((a) => a.agentId === state.activeAgentId);
+  const ovAuthority = document.getElementById("ovAuthority");
+  const ovAuthorityDetail = document.getElementById("ovAuthorityDetail");
+  if (agent) {
+    ovAuthority.textContent = agent.agentId;
+    ovAuthorityDetail.textContent = `cap ${fmtMoney(agent.caveats.maxAmountMinorUnits, agent.caveats.currency)} · ${agent.caveats.categories.join(",")}`;
+  } else {
+    ovAuthority.textContent = "No agent selected";
+    ovAuthorityDetail.textContent = "";
+  }
+
+  const mission = state.viewingMission || state.missions.find((m) => m.status === "active");
+  const ovMission = document.getElementById("ovMission");
+  const ovMissionDetail = document.getElementById("ovMissionDetail");
+  const ovBudget = document.getElementById("ovBudget");
+  if (mission) {
+    ovMission.textContent = mission.missionId;
+    ovMissionDetail.textContent = mission.goal;
+    ovBudget.textContent = `${fmtMoney(mission.remainingMinorUnits, mission.currency)} remaining of ${fmtMoney(mission.budgetMinorUnits, mission.currency)}`;
+  } else {
+    ovMission.textContent = "No mission selected";
+    ovMissionDetail.textContent = "";
+    ovBudget.textContent = "—";
+  }
+
+  const ovDecision = document.getElementById("ovDecision");
+  const ovDecisionDetail = document.getElementById("ovDecisionDetail");
+  if (state.lastDecision) {
+    ovDecision.textContent = state.lastDecision.verdict;
+    ovDecision.className = `factValue ${state.lastDecision.verdict === "allow" ? "allow" : state.lastDecision.verdict === "deny" ? "deny" : ""}`;
+    ovDecisionDetail.textContent = state.lastDecision.reason || "";
+  } else {
+    ovDecision.textContent = "No transaction submitted yet";
+    ovDecision.className = "factValue";
+    ovDecisionDetail.textContent = "";
+  }
+
+  const ovLedger = document.getElementById("ovLedger");
+  const chainStatus = document.getElementById("chainStatus");
+  if (chainStatus && chainStatus.textContent && chainStatus.textContent !== "—") {
+    const valid = chainStatus.className === "valid";
+    ovLedger.textContent = valid ? "Verified" : "Tampered";
+    ovLedger.className = `factValue ${valid ? "allow" : "deny"}`;
+  } else {
+    ovLedger.textContent = "—";
+    ovLedger.className = "factValue";
+  }
+}
+
+// ---------- environment ----------
+// Six real photographs, one per workspace (public/assets/overview|authority|
+// missions|transactions|security|evidence.png — see ENV_WORKSPACE_IMAGES below)
+// behind the shell, crossfading between two stacked <img> layers as the active
+// workspace changes — see index.html's #environment comment for the full layer
+// stack. Every function below is presentation-only, touches only plain DOM
+// properties (no SVG-specific methods), and feature-detects setTimeout/
+// requestAnimationFrame/window exactly like pulseAtmosphere()/staggerReveal()
+// already do, so none of it can throw in the node:vm dashboard-test sandbox.
+
+/**
+ * Fraction of the pipeline a real decision actually reached, derived from the exact
+ * same branching renderDecisionResult() already uses — never a separate guess, and
+ * never further than execution actually got. Still used to choose allow/deny for the
+ * environment's reaction, even though the photo has no discrete "path" to animate a
+ * distance along.
+ */
+function decisionReachFraction(body) {
+  const { decision, execution } = body;
+  if (decision.source === "mission") return { fraction: 0.2, kind: "deny" };
+  if (decision.policy && !decision.policy.allowed) return { fraction: 0.45, kind: "deny" };
+  if (decision.verdict === "escalate") return { fraction: 0.7, kind: "escalate" };
+  if (decision.verdict !== "allow") return { fraction: 0.7, kind: "deny" };
+  if (execution && !execution.success) return { fraction: 0.9, kind: "deny" };
+  return { fraction: 1, kind: "allow" };
+}
+
+// Shared by envSignalTo()/envBlip() below — both write #environmentSignal's
+// className and clear it again after their own delay. Real rapid-fire events (e.g.
+// several genuine Executes within a couple of seconds — exactly what happens right
+// before a real rate-based risk escalation) can trigger several of these calls
+// within each other's delay window; without a token guard, an EARLIER call's
+// setTimeout fires later and unconditionally clears a LATER call's still-fresh
+// state, cutting its glow short or erasing it outright. Found via a live stress
+// test, not theoretical — a genuine ESCALATE's glow was being wiped by a stale
+// timer from an earlier real DENY.
+let envSignalToken = 0;
+
+/** Brightens the environment's warm glow toward the real verdict color, then fades —
+ * called from the same real "moment of truth" sites pulseAtmosphere() already uses
+ * (a real Execute, a real ledger verify, a real revocation denial, the attack
+ * theatre's final server-confirmed check). */
+function envSignalTo(fraction, kind) {
+  const signal = document.getElementById("environmentSignal");
+  if (!signal) return;
+  const myToken = ++envSignalToken;
+  signal.className = kind === "deny" ? "pulse-deny" : kind === "escalate" ? "pulse-escalate" : "pulse-allow";
+  if (typeof setTimeout === "function") {
+    setTimeout(() => {
+      if (myToken === envSignalToken) signal.className = "";
+    }, 1600);
+  }
+}
+
+/** One real, small "blip" per real resolved attack attempt — never a count
+ * independent of the real requests fireOne() actually fired. */
+function envBlip() {
+  const signal = document.getElementById("environmentSignal");
+  if (!signal) return;
+  const myToken = ++envSignalToken;
+  signal.className = "blip";
+  if (typeof setTimeout === "function") {
+    setTimeout(() => {
+      if (myToken === envSignalToken) signal.className = "";
+    }, 260);
+  }
+}
+
+/** Shifts which part of the same photograph the "camera" favors when the workspace
+ * changes — never a different image, never a hard cut (index.html's
+ * #environment.workspace-shift rule shortens the transition slightly for a livelier
+ * response to a deliberate navigation action vs. the slower ambient default). */
+// One real photograph per workspace — six "rooms" of the same environment, not
+// six crops of one source image. Keyed by the exact lowercase workspace name
+// showWorkspace() already uses for its "ws-<name>" class.
+const ENV_WORKSPACE_IMAGES = {
+  overview: "/assets/overview.png",
+  authority: "/assets/authority.png",
+  missions: "/assets/missions.png",
+  transactions: "/assets/transactions.png",
+  security: "/assets/security.png",
+  evidence: "/assets/evidence.png",
+};
+
+let envWorkspaceShiftToken = 0;
+// Tracks which of the two stacked <img class="envImg"> layers is currently the
+// visible ("active") one, so the next switch knows which is free to load into.
+let envImageActiveIsA = true;
+
+function envWorkspaceShift(workspaceName) {
+  const env = document.getElementById("environment");
+  if (!env) return;
+  const myToken = ++envWorkspaceShiftToken;
+  const key = String(workspaceName || "overview").toLowerCase();
+  env.className = key === "overview" ? "workspace-shift" : `workspace-shift ws-${key}`;
+
+  // Crossfade to the real photograph for this workspace. The currently-hidden
+  // layer loads the new file; only once it has actually finished loading (never
+  // on a blank/half-loaded frame) does it become .active and the old one fade out.
+  // Never touches the transaction/decision/ledger logic this presentation sits on
+  // top of — purely which of two <img> elements is visible.
+  const src = ENV_WORKSPACE_IMAGES[key] || ENV_WORKSPACE_IMAGES.overview;
+  const frontId = envImageActiveIsA ? "environmentImage" : "environmentImageB";
+  const backId = envImageActiveIsA ? "environmentImageB" : "environmentImage";
+  const front = document.getElementById(frontId);
+  const back = document.getElementById(backId);
+  if (front && back && front.getAttribute("src") !== src) {
+    const swap = () => {
+      if (myToken !== envWorkspaceShiftToken) return; // superseded by a newer switch — don't fight over which layer is active
+      back.className = "envImg active";
+      front.className = "envImg";
+      envImageActiveIsA = !envImageActiveIsA;
+    };
+    if (back.getAttribute("src") === src && back.complete && back.naturalWidth > 0) {
+      // back already holds this exact workspace's image, fully loaded — e.g.
+      // bouncing between two recently-visited workspaces. Swap immediately; a
+      // "load" listener would never fire for a src that isn't actually changing.
+      swap();
+    } else {
+      if (typeof back.addEventListener === "function") back.addEventListener("load", swap, { once: true });
+      back.src = src;
+    }
+  }
+
+  if (typeof setTimeout === "function") {
+    setTimeout(() => {
+      // Guards against a quick double-click through two workspaces: the first
+      // click's timer must not strip the transition class the second click just set.
+      if (myToken === envWorkspaceShiftToken) {
+        env.className = env.className.replace(/\bworkspace-shift\b/, "").trim();
+      }
+    }, 450);
+  }
+}
+
+let envMouseHandlerAttached = false;
+/**
+ * Combined mouse parallax + scroll parallax + slow idle drift, all feeding the same
+ * two CSS custom properties (--env-x/--env-y) that .envImg's transform (shared by
+ * both workspace-image layers) already consumes, plus --env-scroll-y for the
+ * separate scroll-only offset. Only
+ * wired up in a real browser — `window` doesn't exist at all in the dashboard-test
+ * sandbox, so this whole function is a no-op there rather than a crash (same
+ * feature-detection discipline as every other env* function). Runs one continuous
+ * requestAnimationFrame loop, but only writes to the DOM at ~10Hz (throttled by a
+ * timestamp check) — idle drift needs a live loop, not just an event handler, but
+ * there is no reason to touch style.setProperty 60 times a second for a layer this
+ * subtle. Paused entirely while the tab is hidden.
+ */
+function initEnvironment() {
+  if (envMouseHandlerAttached) return;
+  envMouseHandlerAttached = true;
+  if (typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+  if (!document.documentElement || typeof document.documentElement.style?.setProperty !== "function") return;
+  if (typeof requestAnimationFrame !== "function") return;
+
+  let mouseXRatio = 0;
+  let mouseYRatio = 0;
+  window.addEventListener("mousemove", (evt) => {
+    mouseXRatio = evt.clientX / window.innerWidth - 0.5;
+    mouseYRatio = evt.clientY / window.innerHeight - 0.5;
+  });
+
+  const startTime = Date.now();
+  let lastApplied = 0;
+  let running = true;
+  let rafId = null;
+
+  const tick = () => {
+    if (!running) return;
+    const now = Date.now();
+    if (now - lastApplied >= 90) {
+      lastApplied = now;
+      const elapsedSec = (now - startTime) / 1000;
+      // A slow, small wander so the environment never sits perfectly frozen even
+      // with no input at all — kept small enough that combined with the mouse
+      // offset below, the total stays within the ~8-16px "restrained parallax"
+      // range, never a dramatic sway.
+      const idleX = Math.sin(elapsedSec * 0.11) * 3;
+      const idleY = Math.cos(elapsedSec * 0.07) * 2;
+      const mouseX = mouseXRatio * -13;
+      const mouseY = mouseYRatio * -9;
+      const scrollY = Math.max(-20, Math.min(20, -(window.scrollY || 0) * 0.05));
+      document.documentElement.style.setProperty("--env-x", (idleX + mouseX).toFixed(1));
+      document.documentElement.style.setProperty("--env-y", (idleY + mouseY).toFixed(1));
+      document.documentElement.style.setProperty("--env-scroll-y", scrollY.toFixed(1));
+    }
+    rafId = requestAnimationFrame(tick);
+  };
+  rafId = requestAnimationFrame(tick);
+
+  if (typeof document.addEventListener === "function") {
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        running = false;
+        if (rafId !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(rafId);
+      } else if (!running) {
+        running = true;
+        lastApplied = 0;
+        rafId = requestAnimationFrame(tick);
+      }
+    });
   }
 }
 
@@ -911,17 +1568,28 @@ async function refreshLedger() {
 function boot() {
   document.getElementById("authScreen").style.display = "none";
   document.getElementById("app").style.display = "block";
+  document.getElementById("navBar").style.display = "flex";
+  // The environment photograph leans in more strongly behind the sign-in screen
+  // (see "body.pre-auth #environment"); once inside the real console it steps back
+  // so it never competes with the density of actual data on screen.
+  if (document.body && typeof document.body.className === "string") {
+    document.body.className = document.body.className.replace(/\bpre-auth\b/, "").trim();
+  }
   const badge = document.getElementById("principalBadge");
   badge.textContent = state.principalId + "  ";
   const logout = el("a", { class: "link", text: "switch principal" });
   logout.addEventListener("click", signOut);
   badge.appendChild(logout);
 
+  initWorkspaceNav();
+  initEnvironment();
+  initInfoControls();
   checkDemoMode();
   loadAgents();
   loadMissions();
   refreshLedger();
   startStream();
+  showWorkspace("overview");
 }
 
 // Unauthenticated on purpose (see src/api/server.ts's GET /demo-mode). Called from
@@ -943,13 +1611,16 @@ async function checkDemoMode() {
     const body = await res.json();
     const banner = document.getElementById("demoModeBanner");
     const theatre = document.getElementById("demoTheatre");
+    const prodNote = document.getElementById("securityProdNote");
     if (body.demoMode) {
       banner.textContent = "⚠ LOCAL DEMO MODE — deterministic judge / mock rail — no real money moves";
       banner.style.display = "block";
       theatre.style.display = "block";
+      if (prodNote) prodNote.style.display = "none";
     } else {
       banner.style.display = "none";
       theatre.style.display = "none";
+      if (prodNote) prodNote.style.display = "block";
     }
   } catch {
     /* non-fatal — the dashboard still works, it just won't show the demo-mode banner/theatre */
@@ -976,6 +1647,33 @@ const ATTACK_COUNTERPARTY = "acme-airlines";
 const ATTACK_CATEGORY = "flights";
 const ATTACK_RAIL = "mock_x402"; // the only rail registered in demo mode
 const ATTACK_AMOUNT_MINOR_UNITS = 38_000; // $380 per attempt against a $2,000 mission budget — 5 settle, 15 don't
+const ATTACK_MISSION_BUDGET_MINOR_UNITS = 200_000; // matches attackCreateMission()'s own hardcoded mission budget below — named here so the budget-fill bar has a real denominator, not a second guess at it
+
+// The button's label is derived directly from the SAME constants fireOne() uses to
+// fire the real requests, at script-load time — not a second, independently-typed
+// string. This is the actual fix for the stale "20 × $150" label that used to live
+// in index.html: that string was never connected to ATTACK_AMOUNT_MINOR_UNITS at
+// all, so it silently drifted out of sync with the real $380 amount every request
+// actually uses. Deriving it here means it is now structurally impossible for the
+// label to disagree with the request body again.
+document.getElementById("attackLaunchBtn").textContent =
+  `Launch attack (${ATTACK_ATTEMPT_COUNT} × $${(ATTACK_AMOUNT_MINOR_UNITS / 100).toFixed(0)})`;
+
+// Block 4A: paces the VISUAL reveal of an already-real, already-resolved attempt's
+// row flip only — never the request itself (the real fetch in fireOne() below is
+// untouched and remains genuinely concurrent). setTimeout does not exist in the
+// node:vm sandbox the dashboard tests run app.js in (only document/localStorage/
+// fetch/console/crypto/confirm are provided there — see dashboard-attack-theatre.
+// test.ts), so this feature-detects it and applies the real result immediately,
+// synchronously, with no pacing at all, in that environment — the exact behavior
+// this code had before Block 4A, and exactly what those tests already assert on.
+function scheduleReveal(applyFn, delayMs) {
+  if (typeof setTimeout === "function") {
+    setTimeout(applyFn, delayMs);
+  } else {
+    applyFn();
+  }
+}
 
 async function attackCreateMission() {
   const infoEl = document.getElementById("attackMissionInfo");
@@ -992,7 +1690,7 @@ async function attackCreateMission() {
         missionId,
         agentId: state.activeAgentId,
         goal: "Attack-theatre demo mission — bounded budget for a live concurrency demonstration.",
-        budgetMinorUnits: 200_000,
+        budgetMinorUnits: ATTACK_MISSION_BUDGET_MINOR_UNITS,
         currency: "USD",
         allowedCategories: null,
         approvedCounterparties: null,
@@ -1014,6 +1712,12 @@ function attackUpdateStats(counters) {
   document.getElementById("attackStatAllowed").textContent = String(counters.allowed);
   document.getElementById("attackStatBlocked").textContent = String(counters.blocked);
   document.getElementById("attackStatSpend").textContent = fmtMoney(counters.spendMinorUnits, "USD");
+  // Presentation only, driven by the SAME real counters.spendMinorUnits the stat
+  // tile above already shows — never a second, independently-computed figure.
+  const fillEl = document.getElementById("attackBudgetBarFill");
+  const pct = Math.min(100, (counters.spendMinorUnits / ATTACK_MISSION_BUDGET_MINOR_UNITS) * 100);
+  fillEl.style.width = `${pct}%`;
+  fillEl.className = counters.spendMinorUnits > ATTACK_MISSION_BUDGET_MINOR_UNITS ? "fill overspend" : "fill";
 }
 
 // ---------- attack theatre pipeline trace (Block 3A) ----------
@@ -1114,6 +1818,10 @@ function renderAttackTrace(records, txInput) {
   const flow = el("div", { class: "chainFlow" });
   for (const node of buildAttackTraceStages(record, txInput)) flow.appendChild(node);
   container.appendChild(flow);
+  // Same reusable stagger as the pipeline trace — the trace itself already stops
+  // exactly where the real attempt stopped (buildAttackTraceStages, unchanged); this
+  // only paces the reveal of that already-real, already-final sequence.
+  staggerReveal(flow.childNodes);
 }
 
 async function launchBudgetAttack() {
@@ -1139,6 +1847,8 @@ async function launchBudgetAttack() {
   attemptsEl.innerHTML = "";
   verifiedEl.textContent = "";
   summaryEl.style.display = "flex";
+  const budgetBarEl = document.getElementById("attackBudgetBar");
+  budgetBarEl.style.display = "block";
   const counters = { attempts: 0, allowed: 0, blocked: 0, spendMinorUnits: 0 };
   attackUpdateStats(counters);
 
@@ -1151,17 +1861,26 @@ async function launchBudgetAttack() {
   // client-side guess at what "should" have happened.
   const attemptRecords = new Array(ATTACK_ATTEMPT_COUNT).fill(null);
   for (let i = 0; i < ATTACK_ATTEMPT_COUNT; i++) {
-    const statusSpan = el("span", { class: "attemptStatus", text: "pending…" });
-    const row = el("div", { class: "attemptRow pending" }, [el("span", { text: `#${i + 1}` }), statusSpan]);
+    const statusSpan = el("span", { class: "attemptStatus", text: "···" });
+    const row = el("div", { class: "attemptRow pending", title: `Attempt #${i + 1} — pending` }, [
+      el("span", { class: "attemptIndex", text: `${i + 1}` }),
+      statusSpan,
+    ]);
     attemptsEl.appendChild(row);
     rows.push(row);
     statusSpans.push(statusSpan);
   }
 
+  // Block 4A: only the per-row visual flip is paced below (via scheduleReveal) — the
+  // counters/stat tiles keep updating immediately, in real time, every time. This
+  // index only controls how spaced-out each row's color/text change appears to a
+  // viewer; it has no effect on when the real request was issued or resolved.
+  let revealIndex = 0;
   const fireOne = async (i) => {
     counters.attempts++;
     attackUpdateStats(counters);
     let allowed = false;
+    let settled = false;
     let statusText = "ERROR";
     try {
       const res = await api("/transactions", {
@@ -1179,7 +1898,7 @@ async function launchBudgetAttack() {
       // Only a genuine settlement (execution.success) counts toward "spend" — a
       // decision-layer "allow" whose rail call then failed spent nothing, exactly as
       // computeMissionSpent (the server's own authoritative figure) already treats it.
-      const settled = allowed && Boolean(res.execution && res.execution.success);
+      settled = allowed && Boolean(res.execution && res.execution.success);
       statusText = allowed ? (settled ? "ALLOW" : "ALLOW (unsettled)") : "DENY";
       if (allowed) {
         counters.allowed++;
@@ -1192,9 +1911,23 @@ async function launchBudgetAttack() {
       statusText = "ERROR";
       counters.blocked++;
     }
-    rows[i].className = `attemptRow ${allowed ? "allow" : "deny"}`;
-    statusSpans[i].textContent = statusText;
+    // Counters are the source of truth and update here, immediately — never paced.
     attackUpdateStats(counters);
+    // Presentation only: the real result above is already final; this only paces
+    // HOW FAST this specific row's own color/text change becomes visible, ~100ms
+    // apart, so 20 near-simultaneous resolutions don't all flip within one video
+    // frame. Falls back to immediate (scheduleReveal's own feature-detect) wherever
+    // setTimeout isn't available, e.g. the node:vm dashboard-test sandbox.
+    const myReveal = revealIndex++;
+    const symbol = allowed ? (settled ? "✓" : "✓") : statusText === "ERROR" ? "!" : "✗";
+    scheduleReveal(() => {
+      rows[i].className = `attemptRow ${allowed ? "allow" : "deny"}${allowed && !settled ? " unsettled" : ""}`;
+      rows[i].title = `Attempt #${i + 1} — ${statusText}`;
+      statusSpans[i].textContent = symbol;
+      // One real environment "blip" per real resolved attempt — never a count
+      // independent of the 20 real requests fireOne() actually fired.
+      envBlip();
+    }, myReveal * 100);
   };
 
   await Promise.all(Array.from({ length: ATTACK_ATTEMPT_COUNT }, (_, i) => fireOne(i)));
@@ -1220,8 +1953,16 @@ async function launchBudgetAttack() {
     verifiedEl.innerHTML = "";
     const cls = overspend === 0 ? "valid" : "invalid";
     const headline = overspend === 0 ? "✓ ZERO OVERSPEND — BUDGET HELD" : "✗ OVERSPEND DETECTED";
-    verifiedEl.appendChild(el("div", { class: `integrityBig ${cls}` }, [document.createTextNode(headline)]));
+    let boxClass = `integrityBig ${cls}`;
+    if (overspend === 0 && !attackZeroOverspendPulsedOnce) {
+      boxClass += " pulse";
+      attackZeroOverspendPulsedOnce = true;
+    }
+    verifiedEl.appendChild(el("div", { class: boxClass }, [document.createTextNode(headline)]));
     verifiedEl.appendChild(el("div", { class: "hint", text: detail, style: "margin-top:6px" }));
+    pulseAtmosphere(overspend === 0 ? "allow" : "deny");
+    envSignalTo(1, overspend === 0 ? "allow" : "deny");
+    refreshLedger(); // 20 real ledger writes just happened — keep the shell status chip and Evidence workspace honest
   } catch (err) {
     verifiedEl.innerHTML = "";
     verifiedEl.appendChild(el("div", { class: "hint", text: `Could not confirm server-side mission state: ${err.message}` }));
@@ -1242,7 +1983,10 @@ function renderDelegationChain(container, chain) {
     if (i > 0) container.appendChild(el("div", { class: "chainArrow", text: "↓" }));
     const nodeEl = el("div", { class: `chainNode${node.revoked ? " revoked" : ""}` });
     const top = el("div", { class: "chainTop" }, [el("span", { class: "chainRole", text: node.role })]);
-    if (node.revoked) top.appendChild(el("span", { class: "lockBadge", text: "🔒 REVOKED" }));
+    // Plain text, not an emoji — cross-platform recording reliability (emoji glyph
+    // support/rendering varies by OS/font stack) and consistency with the ✓/✗
+    // ASCII-adjacent vocabulary used everywhere else in this dashboard.
+    if (node.revoked) top.appendChild(el("span", { class: "lockBadge", text: "REVOKED" }));
     nodeEl.appendChild(top);
     nodeEl.appendChild(el("div", { class: "chainId", text: node.agentId }));
     nodeEl.appendChild(
@@ -1292,7 +2036,7 @@ function renderRevocationResult(label, result, railCalls, big) {
     wrapper.appendChild(el("div", { class: `integrityBig ${cls}`, text: verdictText }));
     if (explain) wrapper.appendChild(el("div", { class: "hint", text: explain, style: "margin-top:6px" }));
     if (railCalls !== undefined) {
-      wrapper.appendChild(el("div", { class: "hint", text: `RAIL CALLS AFTER REVOCATION: ${railCalls}` }));
+      wrapper.appendChild(el("div", { class: "hint", text: `Rail calls after revocation: ${railCalls}` }));
     }
     return wrapper;
   }
@@ -1310,7 +2054,7 @@ function renderRevocationResult(label, result, railCalls, big) {
   }
   wrapper.appendChild(body);
   if (railCalls !== undefined) {
-    wrapper.appendChild(el("div", { class: "hint", text: `RAIL CALLS AFTER REVOCATION: ${railCalls}` }));
+    wrapper.appendChild(el("div", { class: "hint", text: `Rail calls after revocation: ${railCalls}` }));
   }
   return wrapper;
 }
@@ -1347,8 +2091,8 @@ async function runRevocationScenario() {
     saveToken(childId, childRes.token);
 
     renderDelegationChain(chainEl, [
-      { role: "PARENT", agentId: parentId, caveats: parentCaveats, revoked: false },
-      { role: "CHILD (attenuated)", agentId: childId, caveats: childCaveats, revoked: false },
+      { role: "Parent", agentId: parentId, caveats: parentCaveats, revoked: false },
+      { role: "Child (attenuated)", agentId: childId, caveats: childCaveats, revoked: false },
     ]);
 
     const txBody = {
@@ -1357,12 +2101,12 @@ async function runRevocationScenario() {
     };
 
     const before = await api("/transactions", { method: "POST", auth: childRes.token, headers: { "idempotency-key": crypto.randomUUID() }, body: txBody }).catch((err) => ({ __error: err.message }));
-    resultsEl.appendChild(renderRevocationResult("BEFORE REVOCATION", before));
+    resultsEl.appendChild(renderRevocationResult("Before revocation", before));
 
     await api(`/agents/${childId}/revoke`, { method: "POST", auth: state.apiKey, body: { reason: "Attack-theatre demo revocation" } });
     renderDelegationChain(chainEl, [
-      { role: "PARENT", agentId: parentId, caveats: parentCaveats, revoked: false },
-      { role: "CHILD (attenuated)", agentId: childId, caveats: childCaveats, revoked: true },
+      { role: "Parent", agentId: parentId, caveats: parentCaveats, revoked: false },
+      { role: "Child (attenuated)", agentId: childId, caveats: childCaveats, revoked: true },
     ]);
 
     const after = await api("/transactions", { method: "POST", auth: childRes.token, headers: { "idempotency-key": crypto.randomUUID() }, body: txBody }).catch((err) => ({ __error: err.message }));
@@ -1371,7 +2115,12 @@ async function runRevocationScenario() {
     // unmodified contract) — never asserted or assumed independent of what the server
     // actually returned.
     const railCalls = after && after.execution ? 1 : 0;
-    resultsEl.appendChild(renderRevocationResult("AFTER REVOCATION", after, railCalls, true));
+    resultsEl.appendChild(renderRevocationResult("After revocation", after, railCalls, true));
+    // The environment's deny reaction fires only once the server has actually
+    // confirmed the post-revocation attempt was denied — never on the optimistic
+    // assumption that revoke() alone means the next attempt will fail.
+    if (after && after.decision && after.decision.verdict !== "allow") envSignalTo(1, "deny");
+    refreshLedger(); // the revocation itself and both real attempts wrote real ledger entries
   } catch (err) {
     resultsEl.appendChild(el("div", { class: "error", text: err.message }));
   } finally {
@@ -1390,8 +2139,16 @@ async function checkIntegrity() {
   const statusEl = document.getElementById("integrityStatus");
   try {
     const res = await api("/ledger", { auth: state.apiKey });
-    statusEl.className = `integrityBig ${res.chainValid ? "valid" : "invalid"}`;
+    let cls = `integrityBig ${res.chainValid ? "valid" : "invalid"}`;
+    if (res.chainValid && !integrityPulsedOnce) {
+      cls += " pulse";
+      integrityPulsedOnce = true;
+    }
+    statusEl.className = cls;
     statusEl.textContent = res.chainValid ? "✓ HASH CHAIN VERIFIED" : "✗ INTEGRITY VIOLATION DETECTED";
+    pulseAtmosphere(res.chainValid ? "allow" : "deny");
+    envSignalTo(1, res.chainValid ? "allow" : "deny");
+    updateShellStatus(res.chainValid, res.entries.length);
     return res;
   } catch (err) {
     statusEl.className = "integrityBig invalid";

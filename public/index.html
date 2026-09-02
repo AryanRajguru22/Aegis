@@ -4,129 +4,449 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Aegis — Trust Mesh Console</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" />
+<!-- overview.png loads as the initial <img src>; preloading the other five means
+     the first visit to each workspace crossfades immediately instead of waiting on
+     a fresh network request. -->
+<link rel="preload" as="image" href="/assets/authority.png" />
+<link rel="preload" as="image" href="/assets/missions.png" />
+<link rel="preload" as="image" href="/assets/transactions.png" />
+<link rel="preload" as="image" href="/assets/security.png" />
+<link rel="preload" as="image" href="/assets/evidence.png" />
 <style>
+  /* Block 6 — the product becomes a shell + workspaces application instead of one
+     long scrolling page. Warm charcoal/copper identity, semantic green/red/gold, the
+     "surface only where it earns it" discipline, and the motion system all carry
+     over unchanged from Block 5 — this pass changes HOW the user moves through
+     Aegis, not the visual language itself. */
   :root {
-    --bg: #0b0f14;
-    --panel: #121821;
-    --panel-2: #161e29;
-    --border: #263140;
-    --text: #e6edf3;
-    --text-dim: #8b98a5;
-    --accent: #4f8cff;
-    --allow: #2ea043;
-    --deny: #e5484d;
-    --escalate: #d29922;
-    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --bg: #131009;
+    --bg-theatre: #0d0a06;
+    --panel: #1d1811;
+    --panel-2: #262018;
+    --border: #3a2f22;
+    --border-soft: #2a2219;
+    --text: #f1e9db;
+    /* Lightened this pass (was #a9987f / #786955) — the environment images run
+       noticeably brighter now than when these were tuned, and secondary/tertiary
+       text across every workspace (hints, labels, metadata, chain roles) was
+       losing contrast against them. Still clearly a step down from --text, and
+       --text-faint still a step down from --text-dim — hierarchy preserved, just
+       shifted up as a set. */
+    --text-dim: #b7a792;
+    --text-faint: #93876f;
+    --accent: #c1793a;
+    --accent-strong: #d68f4d;
+    --accent-dim: rgba(193,121,58,0.14);
+    --allow: #57a06e;
+    --deny: #c15c56;
+    --escalate: #cf9f2e;
+    --mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: "Archivo", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
   * { box-sizing: border-box; }
+  html { background: var(--bg); }
   body {
     margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: var(--bg);
+    font-family: var(--sans);
+    /* No background here on purpose — html's background above is the canvas-level
+       fallback (it paints behind z-index:-3 content correctly). body's own
+       background, despite sitting later in this stylesheet, is a normal in-flow
+       box and its background paints AFTER negative z-index descendants like
+       #environment in CSS's stacking/paint order, regardless of source order —
+       so a background here silently covers the fixed environment photo for the
+       full height of body's real content box. Confirmed live: forcing this to
+       transparent was the entire fix; nothing else needed to change. */
     color: var(--text);
+    position: relative;
+    /* A uniform, subtle contrast lift for every piece of text in the app (this
+       property inherits) — lets the environment run brighter without needing an
+       opaque panel behind every label. Barely perceptible on text that already
+       sits on a solid surface; does the real work for text floating directly over
+       the photograph (chain nodes, section labels, hints). */
+    text-shadow: 0 1px 3px rgba(0,0,0,0.55);
   }
+
+  /* ---- environment: six real photographs, one per workspace (public/assets/
+     overview|authority|missions|transactions|security|evidence.png), replacing the
+     single aegis-environment.png this layer used before (kept on disk, unused —
+     see index.html body comment). Stack, back to front: page background ->
+     photograph -> a light edge vignette (readability only where the photo would
+     otherwise fight text) -> UI. #environmentSignal is a soft, generic
+     warm/green/red/amber glow (never a hard traced line) that only brightens at
+     real verdict/activity moments. #bgPulse is the pre-existing Block 4A whole-page
+     verdict tint — kept exactly as it was.
+
+     Two stacked <img> layers (#environmentImage / #environmentImageB, both
+     .envImg) rather than one — swapping a single <img>'s src on workspace change
+     would pop/flash the instant the new file loads. Whichever one is .active sits
+     at opacity 1; app.js's envWorkspaceShift() loads the new workspace's image into
+     the BACKGROUND layer, waits for it to actually finish loading, then flips
+     .active — giving the crossfade the "smoothly transition between environments"
+     look asked for, never a blank or half-loaded frame. */
+  #environment {
+    position: fixed; inset: 0; z-index: -3; pointer-events: none; overflow: hidden;
+    opacity: 0.95; transition: opacity 900ms ease;
+  }
+  body.pre-auth #environment { opacity: 1; }
+  .envImg {
+    position: absolute; inset: -24px;
+    width: calc(100% + 48px); height: calc(100% + 48px);
+    object-fit: cover; object-position: 50% 45%;
+    /* Raised from brightness(0.62) — the environment was staying more hidden than
+       intended even after it became technically visible; this pass makes it the
+       dominant visual layer the UI sits inside, per direct screenshot comparison
+       against the reference, not just a CSS-level brightness bump for its own sake. */
+    filter: brightness(0.8) saturate(1.05) contrast(1.07);
+    transform: translate3d(calc((var(--env-x, 0) + var(--env-scroll-x, 0)) * 1px), calc((var(--env-y, 0) + var(--env-scroll-y, 0)) * 1px), 0) scale(1.06);
+    transition: transform 80ms linear, opacity 900ms ease;
+    opacity: 0;
+    will-change: transform, opacity;
+  }
+  .envImg.active { opacity: 1; }
+  /* Each real photo gets its own framing, tuned to what's actually in it — not a
+     fake crop of one shared source anymore, so no per-workspace scale trickery is
+     needed. A restrained per-workspace mood (brightness/contrast) still applies via
+     #environment's workspace class, same as before. */
+  #environmentImage, #environmentImageB { object-position: 45% 45%; } /* overview.png: chip cluster sits left-of-center */
+  #environment.ws-authority .envImg { object-position: 50% 32%; }
+  #environment.ws-missions .envImg { object-position: 50% 55%; }
+  #environment.ws-transactions .envImg { object-position: 50% 48%; }
+  #environment.ws-security .envImg { object-position: 50% 42%; filter: brightness(0.68) saturate(1.02) contrast(1.1); }
+  #environment.ws-evidence .envImg { object-position: 50% 52%; }
+  /* A true edge vignette — transparent through the great majority of the frame,
+     darkening only in the outer margin, for a cinematic frame rather than a
+     dark-brown page. This is the ONLY full-viewport darkening layer now. */
+  #environmentVignette {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse 90% 85% at 50% 38%, transparent 55%, rgba(8,6,4,0.20) 88%, rgba(8,6,4,0.38) 100%);
+  }
+  #environmentShade { display: none; }
+  /* A soft, deliberately generic warm glow (not a literal traced path) — anchored
+     toward the lower-right, where the photo's own bright copper cluster already
+     sits in its default crop AND where app content is least likely to cover it
+     regardless of how tall a given workspace's real content happens to be. An
+     earlier version centered this around the viewport's vertical middle (63% 45%),
+     which worked on short pages (Overview) but landed behind opaque .surface panels
+     on content-dense ones (Transactions) — caught by actually screenshotting a
+     content-heavy workspace, not assumed. The idle/default tone here is
+     deliberately dimmer and more neutral than the three verdict pulses below, so a
+     real ALLOW/DENY/ESCALATE reads as a distinct event rather than "the ambient
+     glow got a bit brighter" — escalate in particular is pushed toward a more
+     saturated true gold/yellow (not orange) specifically so it doesn't read as
+     just more of the page's own copper warmth. */
+  #environmentSignal {
+    position: absolute; inset: 0;
+    background: radial-gradient(circle 340px at 84% 88%, rgba(180,124,74,0.15), transparent 70%);
+    opacity: 0; transition: opacity 900ms ease;
+  }
+  #environmentSignal.pulse-allow { opacity: 1; background: radial-gradient(circle 400px at 84% 88%, rgba(87,160,110,0.32), transparent 66%); }
+  #environmentSignal.pulse-deny { opacity: 1; background: radial-gradient(circle 400px at 84% 88%, rgba(193,92,86,0.34), transparent 66%); }
+  #environmentSignal.pulse-escalate { opacity: 1; background: radial-gradient(circle 420px at 84% 88%, rgba(232,182,42,0.42), transparent 63%); }
+  #environmentSignal.blip { opacity: 0.85; }
+  #environment.workspace-shift .envImg { transition: transform 420ms ease-out, opacity 700ms ease; }
+
+  #bgPulse {
+    position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    opacity: 0; transition: opacity 700ms ease;
+    background: radial-gradient(ellipse 900px 500px at 50% 0%, currentColor, transparent 72%);
+    color: var(--allow);
+  }
+  #bgPulse.show { opacity: 0.06; }
+  @media (prefers-reduced-motion: reduce) {
+    #bgPulse, .envImg, #environmentSignal { transition: none !important; animation: none !important; }
+  }
+
   header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 20px;
+    padding: 14px 24px;
     border-bottom: 1px solid var(--border);
-    background: var(--panel);
+    position: relative;
+    /* A localized readability gradient behind the wordmark/status row only — not a
+       full-page shade — since the brightened photograph sits directly behind it.
+       Lightened further this pass so the environment reads through the header
+       itself, not just below it; body's text-shadow carries the readability load
+       that used to come from a heavier gradient here. */
+    background: linear-gradient(180deg, rgba(10,8,5,0.42) 0%, rgba(10,8,5,0.12) 100%);
   }
-  header h1 { font-size: 16px; margin: 0; letter-spacing: 0.3px; }
-  header h1 span { color: var(--text-dim); font-weight: 400; }
+  header h1 { font-size: 15px; margin: 0; letter-spacing: 0.1px; font-weight: 700; }
+  header h1 span { color: var(--text-dim); font-weight: 400; letter-spacing: 0.1px; }
+  .headerTag { display: inline-block; margin-left: 10px; padding: 2px 7px; border: 1px solid var(--accent); border-radius: 3px; font-family: var(--mono); font-size: 9px; letter-spacing: 0.6px; text-transform: uppercase; color: var(--accent); vertical-align: 2px; }
+  header .tagline { font-size: 11.5px; color: var(--text-dim); margin-top: 3px; letter-spacing: 0.1px; }
+  .shellRight { display: flex; align-items: center; gap: 18px; }
+  .shellStatus { font-family: var(--mono); font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+  .shellStatus .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); display: inline-block; }
+  .shellStatus.valid .dot { background: var(--allow); }
+  .shellStatus.invalid .dot { background: var(--deny); }
   #principalBadge { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+
+  /* ---- persistent nav: hidden until signed in, then a plain row of text-weight
+     tabs — no pill buttons, no icons-as-decoration. The active workspace is the
+     only thing visually distinguished. ---- */
+  #navBar { display: none; gap: 2px; padding: 0 24px; border-bottom: 1px solid var(--border); background: rgba(10,8,5,0.20); }
+  .navBtn {
+    background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0;
+    color: var(--text-dim); font-family: var(--sans); font-size: 12.5px; font-weight: 600;
+    padding: 11px 14px; cursor: pointer; letter-spacing: 0.15px;
+  }
+  .navBtn:hover { background: transparent; color: var(--text); }
+  .navBtn.active { color: var(--accent-strong); border-bottom-color: var(--accent); }
+
   button {
     background: var(--accent);
-    color: white;
+    color: #17110a;
     border: none;
-    border-radius: 6px;
-    padding: 7px 12px;
+    border-radius: 4px;
+    padding: 8px 18px;
     font-size: 13px;
+    font-weight: 600;
+    font-family: var(--sans);
     cursor: pointer;
   }
-  button.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
-  button.danger { background: var(--deny); }
+  /* .row still stretches its children evenly — correct for a genuine multi-action
+     choice (Simulate/Execute, Create/Cancel, Verify/Tamper). .actionRow does not —
+     a single action gets its own natural width and sits left-aligned, not stretched
+     into a giant full-width CTA for no reason. */
+  .actionRow { display: flex; gap: 8px; }
+  button:hover { background: var(--accent-strong); }
+  button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); font-weight: 500; }
+  button.secondary:hover { border-color: var(--accent); color: var(--accent-strong); }
+  button.danger { background: var(--deny); color: #1a0d0c; }
+  button.danger:hover { background: var(--deny); filter: brightness(1.1); }
   button:disabled { opacity: 0.5; cursor: default; }
+
   input, select, textarea {
-    background: var(--bg);
-    border: 1px solid var(--border);
+    /* Still solid enough that typed text stays crisp — legibility of what you're
+       typing takes priority over letting the photograph through a form control
+       specifically — just slightly less opaque than before, in step with the
+       rest of this pass. */
+    background: rgba(15,12,7,0.82);
+    border: 1px solid var(--border-soft);
     color: var(--text);
-    border-radius: 5px;
-    padding: 6px 8px;
-    font-size: 13px;
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-size: 14px;
+    font-family: var(--sans);
     width: 100%;
   }
-  label { font-size: 11px; color: var(--text-dim); display: block; margin: 8px 0 3px; }
-  .panel {
-    background: var(--panel);
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  label { font-size: 11px; color: var(--text-dim); display: block; margin: 8px 0 3px; letter-spacing: 0.1px; }
+  /* A budget is a boundary being established, not just another text field — same
+     input, same behavior, just given the typographic weight the number deserves. */
+  .budgetInput { font-family: var(--mono); font-size: 20px; font-weight: 700; padding: 10px 12px; }
+
+  /* A "surface" is reserved for the handful of things that genuinely need
+     containment: an interactive composer + its live result, a budget anchor, an
+     evidence strip. Everything else is a plain, unboxed .section. */
+  .surface {
+    /* Dark glass, not an opaque panel — enough tint that dense text (composer
+       forms, mission detail, sign-in) stays comfortably readable, but the
+       environment genuinely shows through, not just bleeds at the edges. Dropped
+       from 0.93 to 0.60 this pass; body's text-shadow is what keeps text crisp at
+       this lower opacity instead of the panel doing all the contrast work alone. */
+    background: rgba(22,18,13,0.60);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 14px;
+    border-radius: 6px;
+    padding: 16px;
   }
-  .panel h2 { font-size: 13px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
+  .surface h2 { font-size: 11px; font-weight: 600; margin: 0 0 12px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-dim); }
+  /* The Decision Inspector is the investigation surface Transactions is actually
+     about — the composer that feeds it stays utilitarian and small by comparison.
+     Mission Detail carries the same weight for the same reason: it's the surface
+     that actually answers "why did/didn't money move" for this mission. */
+  #wsTransactions .wsMain .surface h2,
+  #wsMissions .wsMain .surface h2 { font-size: 16px; text-transform: none; letter-spacing: 0; color: var(--text); font-weight: 700; }
+
+  .section { margin-bottom: 30px; }
+  .section:last-child { margin-bottom: 0; }
+  .sectionLabel {
+    font-family: var(--mono); font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.8px; color: var(--text-faint);
+    padding-bottom: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border-soft);
+  }
+
+  /* Visible by default (matches every existing app.js call site, which only ever
+     sets style.display = "none" after a real sign-in — never sets it back). */
   #authScreen {
-    max-width: 420px;
-    margin: 80px auto;
+    display: grid; grid-template-columns: 1fr 380px; gap: 56px;
+    max-width: 900px; margin: 100px auto; padding: 0 20px; align-items: center;
   }
+  .authWordmark { font-size: 30px; font-weight: 700; letter-spacing: 0.2px; }
+  .authWordmark span { color: var(--accent); }
+  .authTagline { font-size: 13px; color: var(--text-dim); margin-top: 8px; max-width: 34ch; line-height: 1.5; }
+  .authHierarchy { list-style: none; margin: 26px 0 0; padding: 0; }
+  .authHierarchy li {
+    font-size: 12.5px; color: var(--text-dim); padding: 8px 0 8px 16px;
+    border-left: 2px solid var(--border); margin-bottom: 2px;
+  }
+  .authHierarchy li b { color: var(--text); font-weight: 600; }
   #app { display: none; }
-  .grid {
-    display: grid;
-    grid-template-columns: 340px 1fr 380px;
-    gap: 14px;
-    padding: 14px;
-    align-items: start;
+
+  /* ---- workspaces: exactly one visible at a time. Reuses the exact same render
+     functions/element ids as before — this only changes where in the DOM they sit
+     and whether they're currently shown. ---- */
+  #workspaces { position: relative; }
+  .workspace { display: none; padding: 26px 32px 64px; }
+  .workspace.active { display: block; animation: wsEnter 240ms ease; }
+  @keyframes wsEnter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+  @media (prefers-reduced-motion: reduce) { .workspace.active { animation: none; } }
+
+  .wsHero { margin-bottom: 36px; max-width: 780px; }
+  .wsHero h2 { margin: 0 0 16px; font-size: 27px; font-weight: 700; letter-spacing: -0.3px; }
+  /* A real sequence (Authority, Transactions, Evidence) reads as an arrow chain; a
+     set of real facets that aren't actually sequential (Missions) reads as a plain
+     list instead — never force an arrow onto something that doesn't really flow. */
+  .chainSequence { font-family: var(--mono); font-size: 13.5px; letter-spacing: 0.3px; color: var(--text-dim); margin-bottom: 14px; }
+  .chainSequence b { color: var(--accent-strong); font-weight: 600; }
+  .chainSequence .sep { color: var(--text-faint); margin: 0 10px; }
+  .wsHero .hint { margin-top: 0; font-size: 12.5px; max-width: 62ch; }
+
+  /* ---- Progressive disclosure: a short line stays permanently visible; a small
+     info control reveals the fuller explanation on hover, click/tap, or keyboard
+     focus — never hover-only, never a modal. Dark glass, feathered edges via box-
+     shadow rather than a hard-edged card, same gold accent as everything else. ---- */
+  .infoControl { position: relative; display: inline-block; }
+  .infoBtn {
+    all: unset;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 15px; height: 15px; border-radius: 50%;
+    border: 1px solid var(--border-soft); color: var(--text-faint);
+    font-family: var(--mono); font-size: 9.5px; line-height: 1;
+    margin-left: 5px; cursor: pointer; vertical-align: 1px;
+    transition: border-color 150ms ease, color 150ms ease;
   }
+  .infoBtn:hover, .infoBtn:focus-visible, .infoControl.open .infoBtn { border-color: var(--accent); color: var(--accent-strong); }
+  .infoBtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .infoPopover {
+    position: absolute; z-index: 30; top: calc(100% + 8px); left: 0; right: auto;
+    width: max-content; max-width: min(300px, calc(100vw - 32px));
+    background: rgba(20,16,11,0.94);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 12px; line-height: 1.55; color: var(--text-dim); font-weight: 400;
+    text-transform: none; letter-spacing: 0;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.55);
+    opacity: 0; visibility: hidden; transform: translateY(-4px);
+    transition: opacity 150ms ease, transform 150ms ease, visibility 150ms;
+    pointer-events: none;
+  }
+  .infoPopover.flip-right { left: auto; right: 0; }
+  .infoControl:hover .infoPopover,
+  .infoControl:focus-within .infoPopover,
+  .infoControl.open .infoPopover {
+    opacity: 1; visibility: visible; transform: translateY(0); pointer-events: auto;
+  }
+  @media (prefers-reduced-motion: reduce) { .infoPopover { transition: none; } }
+
+  .wsSplit { display: grid; grid-template-columns: 300px 1fr; gap: 48px; align-items: start; }
+  /* A faint architectural tint, not a background — the left rail reads as its own
+     considered surface (agents, forms, lists) distinct from the open environment
+     on the right, without becoming another opaque panel. */
+  .wsPane {
+    border-right: 1px solid var(--border-soft);
+    background: linear-gradient(180deg, rgba(15,12,8,0.34), rgba(15,12,8,0.16));
+    padding: 10px 24px 16px 12px;
+    border-radius: 6px 0 0 6px;
+  }
+  .wsMain { min-width: 0; }
+  @media (max-width: 1180px) {
+    .wsSplit { grid-template-columns: 1fr; gap: 0; }
+    .wsPane { border-right: none; border-bottom: 1px solid var(--border); border-radius: 6px; padding: 10px 12px 22px; margin-bottom: 22px; }
+  }
+
   .row { display: flex; gap: 8px; }
   .row > * { flex: 1; }
-  .agentNode {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 8px 10px;
-    margin: 6px 0;
-    background: var(--panel-2);
-    cursor: pointer;
+
+  /* ---- Overview: a small set of real, labeled facts — not a duplicate of every
+     panel elsewhere. Clicking a fact jumps to the workspace that owns it. ---- */
+  /* ---- Overview hero: a cinematic entrance, not a card grid. Large confident
+     typography establishes the product before any control appears; the state row
+     below reads as system state (typographic columns, one hairline rule) rather
+     than a tray of boxed stat cards — open space and the photograph do the
+     separating, not borders/backgrounds. ---- */
+  .ovHero { padding: 54px 0 8px; max-width: 720px; }
+  .ovWordmark { font-size: 58px; font-weight: 700; letter-spacing: -1px; line-height: 1; color: var(--text); }
+  .ovWordmark span { color: var(--accent); }
+  .ovSubtitle { font-family: var(--mono); font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-top: 12px; }
+  .ovStatement { font-size: 19px; font-weight: 500; color: var(--text-dim); margin-top: 20px; letter-spacing: 0.2px; }
+
+  .factGrid { display: flex; flex-wrap: wrap; gap: 44px 56px; margin-top: 56px; padding-top: 26px; border-top: 1px solid var(--border-soft); }
+  .factBlock { min-width: 170px; cursor: default; }
+  .factBlock.goto { cursor: pointer; }
+  .factBlock.goto:hover .factValue { color: var(--accent-strong); }
+  .factValue { font-size: 19px; font-weight: 700; color: var(--text); margin-top: 6px; transition: color 150ms ease; }
+  .factValue.allow { color: var(--allow); }
+  .factValue.deny { color: var(--deny); }
+  .factSub { font-size: 12px; color: var(--text-dim); margin-top: 4px; line-height: 1.5; max-width: 30ch; }
+  .ovActivity { margin-top: 60px; max-width: 640px; }
+  @media (max-width: 900px) {
+    .ovWordmark { font-size: 40px; }
   }
-  .agentNode.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+  .agentNode {
+    border: none;
+    border-left: 2px solid var(--border);
+    border-bottom: 1px solid var(--border-soft);
+    border-radius: 0;
+    padding: 8px 0 8px 10px;
+    margin: 0;
+    background: transparent;
+    cursor: pointer;
+    transition: background-color 150ms ease, border-left-color 150ms ease;
+  }
+  .agentNode:last-child { border-bottom: none; }
+  .agentNode.active { border-left-color: var(--accent); background: var(--accent-dim); }
+  .agentNode.root { border-left-color: var(--accent); }
+  .agentNode.delegated { border-left-color: var(--border); }
   .agentNode .id { font-family: var(--mono); font-size: 12px; font-weight: 600; }
   .agentNode .goal { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
   .agentNode .caveats { font-size: 10px; color: var(--text-dim); margin-top: 4px; font-family: var(--mono); }
-  .agentNode .actions { margin-top: 6px; display: flex; gap: 6px; }
+  .agentNode .actions { margin-top: 6px; display: flex; gap: 6px; opacity: 0.6; transition: opacity 150ms ease; }
+  .agentNode:hover .actions, .agentNode.active .actions { opacity: 1; }
   .agentNode .actions button { padding: 3px 8px; font-size: 11px; }
+
   .badge {
     display: inline-block;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10.5px;
     font-weight: 700;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.4px;
     text-transform: uppercase;
   }
-  .badge.allow { background: rgba(46,160,67,0.18); color: var(--allow); }
-  .badge.deny { background: rgba(229,72,77,0.18); color: var(--deny); }
-  .badge.escalate { background: rgba(210,153,34,0.18); color: var(--escalate); }
-  .badge.gray { background: rgba(139,152,165,0.18); color: var(--text-dim); }
-  #feed { display: flex; flex-direction: column-reverse; gap: 8px; max-height: 480px; overflow-y: auto; }
+  .badge.allow { background: rgba(87,160,110,0.16); color: var(--allow); }
+  .badge.deny { background: rgba(193,92,86,0.16); color: var(--deny); }
+  .badge.escalate { background: rgba(207,159,46,0.16); color: var(--escalate); }
+  .badge.gray { background: rgba(169,152,127,0.16); color: var(--text-dim); }
+
+  #feed { display: flex; flex-direction: column-reverse; gap: 0; max-height: 480px; overflow-y: auto; }
   .card {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 8px 10px;
-    background: var(--panel-2);
+    border: none;
+    border-top: 1px solid var(--border-soft);
+    border-radius: 0;
+    padding: 8px 2px;
+    background: transparent;
     font-size: 12px;
   }
+  .card:first-child { border-top: none; }
   .card .top { display: flex; justify-content: space-between; align-items: center; }
   .card .kind { font-family: var(--mono); font-size: 11px; color: var(--accent); }
-  .card .time { font-size: 10px; color: var(--text-dim); }
+  .card .time { font-size: 10.5px; color: var(--text-dim); }
   .card .body { margin-top: 6px; color: var(--text-dim); font-size: 11px; line-height: 1.5; }
   .card .body b { color: var(--text); }
+
   #result { margin-top: 10px; }
+  .verdictLine { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; font-size: 15px; font-weight: 700; }
+  .txContext { font-family: var(--mono); font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
   #chainStatus { font-size: 12px; margin-bottom: 8px; }
   #chainStatus.valid { color: var(--allow); }
   #chainStatus.invalid { color: var(--deny); }
-  .hash { font-family: var(--mono); font-size: 10px; color: var(--text-dim); word-break: break-all; }
-  .stack { display: flex; flex-direction: column; gap: 14px; }
+  .hash { font-family: var(--mono); font-size: 11px; color: var(--text-dim); word-break: break-all; letter-spacing: 0.1px; }
   .error { color: var(--deny); font-size: 12px; margin-top: 8px; }
-  .hint { font-size: 11px; color: var(--text-dim); margin-top: 6px; }
+  .hint { font-size: 12px; color: var(--text-dim); margin-top: 6px; line-height: 1.5; }
   a.link { color: var(--accent); cursor: pointer; }
   #ledgerEntries { max-height: 260px; overflow-y: auto; margin-top: 8px; }
 
@@ -135,17 +455,20 @@
     text-align: center;
     padding: 6px 14px;
     background: var(--escalate);
-    color: #1a1200;
+    color: #1f1706;
     font-weight: 700;
     font-size: 12px;
     letter-spacing: 0.3px;
   }
 
-  /* ---- missions ---- */
-  .missionsGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 0 14px 14px; align-items: start; }
-  #missionList { display: flex; flex-direction: column; gap: 8px; max-height: 520px; overflow-y: auto; }
-  .missionCard { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--panel-2); font-size: 12px; cursor: pointer; }
-  .missionCard.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  #missionList { display: flex; flex-direction: column; gap: 0; max-height: 380px; overflow-y: auto; margin-bottom: 16px; }
+  .missionCard {
+    border: none; border-left: 2px solid transparent; border-bottom: 1px solid var(--border-soft);
+    border-radius: 0; padding: 10px 0 10px 10px; background: transparent; font-size: 12px; cursor: pointer;
+    transition: background-color 150ms ease, border-left-color 150ms ease;
+  }
+  .missionCard:last-child { border-bottom: none; }
+  .missionCard.active { border-left-color: var(--accent); background: var(--accent-dim); }
   .missionCard .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
   .missionCard .id { font-family: var(--mono); font-weight: 600; }
   .missionCard .goal { color: var(--text); margin-bottom: 4px; }
@@ -153,291 +476,486 @@
   .missionCard .actions { margin-top: 8px; display: flex; gap: 6px; }
   .missionCard .actions button { padding: 3px 8px; font-size: 11px; }
 
-  /* ---- decision pipeline (Mission -> Capability & Policy -> Risk -> Decision -> Execution) ---- */
-  .pipeline { display: flex; flex-direction: column; gap: 6px; }
-  .stage { border-left: 3px solid var(--border); border-radius: 4px; padding: 6px 10px; background: var(--panel-2); }
+  .pipeline { display: flex; flex-direction: column; }
+  .stage { border-left: 2px solid var(--border); border-bottom: 1px solid var(--border-soft); padding: 8px 0 8px 12px; }
+  .stage:last-child { border-bottom: none; }
   .stage-allow { border-left-color: var(--allow); }
   .stage-deny { border-left-color: var(--deny); }
   .stage-escalate { border-left-color: var(--escalate); }
-  .stage-gray { border-left-color: var(--text-dim); }
+  .stage-gray { border-left-color: var(--border); }
   .stageHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .stageLabel { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); }
+  .stageLabel { font-size: 12px; font-weight: 600; color: var(--text-dim); }
   .stageDetail { font-size: 12px; color: var(--text-dim); margin-top: 4px; line-height: 1.5; }
   .stageDetail b { color: var(--text); }
-  #missionDetail { margin-top: 4px; }
-  #missionDetail h3 { font-family: var(--mono); font-size: 13px; margin: 0 0 4px; }
-  #missionHistory { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; max-height: 420px; overflow-y: auto; }
 
-  /* ---- demo theatre (Step 13) — hidden unless the server reports AEGIS_DEMO_MODE=true ---- */
-  #demoTheatre { display: none; padding: 0 14px 14px; }
-  .theatreTitle { padding: 4px 2px 10px; }
-  .theatreTitle h2 { margin: 0 0 4px; font-size: 15px; text-transform: none; letter-spacing: 0; color: var(--text); }
-  .theatreGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; align-items: start; }
-  @media (max-width: 1200px) { .theatreGrid { grid-template-columns: 1fr; } }
+  /* Identity first, at real weight — the mission's own name is the primary fact
+     this whole panel is about, same register the Decision Inspector's verdict
+     line already gets. */
+  #missionDetail h3 { font-family: var(--mono); font-size: 21px; font-weight: 700; color: var(--text); margin: 0 0 8px; letter-spacing: -0.2px; }
+  .missionIdentityLine { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .missionAgentRef { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+  #missionDetail .goal { font-size: 14px; color: var(--text); line-height: 1.5; max-width: 62ch; margin-bottom: 4px; }
+  /* A bounded allocation reads like a statement line, not a floating card — framed
+     by rules above and below rather than a filled/bordered box. */
+  .missionBudgetBlock { margin: 14px 0; padding: 10px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  /* Real arithmetic, not just the final figure — budget minus settled minus reserved
+     equals remaining, spelled out from the exact same numbers the hero line already
+     shows, so the "why" is visible without extra explanation text. */
+  .budgetMath { font-family: var(--mono); font-size: 11px; color: var(--text-dim); margin-top: 8px; line-height: 1.8; }
+  .budgetMath .op { color: var(--text-faint); margin-right: 4px; }
+  .missionAuthorityLine { font-size: 11px; color: var(--text-dim); line-height: 1.6; margin: 12px 0; padding: 8px 0 8px 12px; border-left: 2px solid var(--border); }
+  #missionHistory { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; max-height: 380px; overflow-y: auto; }
 
-  /* Scenario A: attack theatre */
-  .attackSummary { display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 0; }
-  .attackSummary .stat { display: flex; flex-direction: column; gap: 2px; min-width: 64px; }
-  .attackSummary .stat .value { font-family: var(--mono); font-size: 19px; font-weight: 700; color: var(--text); transition: color 200ms ease; }
-  .attackSummary .stat .label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-dim); }
-  #attackAttempts { display: flex; flex-direction: column; gap: 3px; max-height: 280px; overflow-y: auto; margin-top: 8px; }
+  /* ---- Security workspace — one continuous dark "stage", not a card near the
+     bottom of the page. Hairline-divided columns replace boxed sub-panels. ---- */
+  /* Translucent, not opaque — Security is meant to be the workspace where the
+     photograph is most visible; the theatre keeps its own darker "stage" identity
+     without fully blocking the environment behind it. */
+  #demoTheatre { display: none; background: rgba(13,10,6,0.46); border: 1px solid var(--border); border-radius: 6px; padding: 30px 32px; margin-top: 4px; }
+  .theatreTitle { margin-bottom: 22px; }
+  .theatreTitle h2 { margin: 0 0 4px; font-size: 16px; font-weight: 700; letter-spacing: 0.1px; color: var(--text); }
+  .theatreGrid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 0; }
+  .theatreCol { padding: 0 32px; border-left: 1px solid var(--border-soft); }
+  .theatreCol:first-child { padding-left: 0; border-left: none; }
+  .theatreCol h2 { font-size: 12px; font-weight: 600; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
+  @media (max-width: 1000px) {
+    .theatreGrid { grid-template-columns: 1fr; }
+    .theatreCol { padding: 0 0 20px; border-left: none; border-top: 1px solid var(--border-soft); padding-top: 20px; }
+    .theatreCol:first-child { border-top: none; padding-top: 0; }
+  }
+
+  .attackSummary { display: flex; gap: 32px; flex-wrap: wrap; margin: 18px 0; }
+  .attackSummary .stat { display: flex; flex-direction: column; gap: 2px; min-width: 60px; }
+  .attackSummary .stat .value { font-family: var(--mono); font-size: 34px; font-weight: 700; color: var(--text); transition: color 200ms ease; line-height: 1; }
+  .attackSummary .stat .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-top: 4px; }
+  /* A wrapping grid of small indicators reads as concurrent activity happening at
+     once — the thing this demo actually proves — rather than a tall scrolling list
+     of rows, which reads as a spreadsheet. Each cell still carries a real, specific
+     outcome (title attribute) on hover/focus; nothing here reorders or summarizes
+     away what fireOne() actually observed. */
+  #attackAttempts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
   .attemptRow {
-    display: flex; align-items: center; justify-content: space-between;
-    border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px;
-    background: var(--panel-2); font-family: var(--mono); font-size: 11px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+    width: 40px; height: 34px;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: var(--panel-2); font-family: var(--mono);
     transition: background-color 220ms ease, border-color 220ms ease;
     animation: theatreEnter 160ms ease;
   }
+  .attemptRow .attemptIndex { font-size: 8.5px; color: var(--text-faint); }
+  .attemptRow .attemptStatus { font-weight: 700; font-size: 12px; letter-spacing: 0.2px; }
   .attemptRow.pending { color: var(--text-dim); }
-  .attemptRow.allow { border-color: var(--allow); background: rgba(46,160,67,0.10); color: var(--text); }
-  .attemptRow.deny { border-color: var(--deny); background: rgba(229,72,77,0.10); color: var(--text); }
-  .attemptRow .attemptStatus { font-weight: 700; letter-spacing: 0.3px; }
+  .attemptRow.allow { border-color: var(--allow); background: rgba(87,160,110,0.12); color: var(--allow); }
+  .attemptRow.allow.unsettled { border-style: dashed; }
+  .attemptRow.deny { border-color: var(--deny); background: rgba(193,92,86,0.12); color: var(--deny); }
 
-  /* Scenario B/D: delegation chain */
+  /* Architecture nodes, not boxed cards — a left accent rule marks each stage of the
+     chain, matching the same vocabulary .agentNode/.missionCard already flattened
+     to. Reused by Authority Flow, the revocation chain visual, and the attack-theatre
+     representative trace, so flattening it once lifts all three at once. */
   .chainFlow { display: flex; flex-direction: column; align-items: stretch; }
-  .chainNode { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--panel-2); animation: theatreEnter 220ms ease; transition: border-color 220ms ease, opacity 220ms ease; }
-  .chainNode.revoked { border-color: var(--deny); opacity: 0.6; }
+  .chainNode {
+    border: none; border-left: 2px solid var(--border); border-radius: 0;
+    padding: 10px 12px 10px 16px;
+    /* Not a panel — a heavily-feathered glow hugging the text, fully transparent
+       well before the node's own right edge, so it never reads as a box. Confirmed
+       needed by screenshot: this text floats with no backing at all, and on
+       Security's globe crop specifically its bright red arc can pass directly
+       behind it, leaving weaker contrast than the shared body text-shadow alone
+       covers. Authority Flow's funnel doesn't happen to collide the same way
+       today, but reuses this same component, so it gets the same protection. */
+    background: linear-gradient(90deg, rgba(8,6,4,0.4) 0%, rgba(8,6,4,0.18) 45%, transparent 78%);
+    animation: theatreEnter 220ms ease; transition: border-left-color 220ms ease, opacity 220ms ease;
+  }
+  .chainNode.revoked { border-left-color: var(--deny); opacity: 0.55; }
   .chainNode .chainTop { display: flex; align-items: center; justify-content: space-between; }
-  .chainNode .chainRole { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
+  .chainRole { font-size: 11.5px; font-weight: 600; color: var(--text-dim); }
   .chainNode .lockBadge { color: var(--deny); font-size: 10px; font-weight: 700; letter-spacing: 0.3px; }
-  .chainNode .chainId { font-family: var(--mono); font-weight: 700; margin: 2px 0 6px; font-size: 12px; }
+  .chainNode .chainId { font-family: var(--mono); font-weight: 700; margin: 2px 0 6px; font-size: 13px; }
   .chainNode .chainCaveats { font-family: var(--mono); font-size: 11px; color: var(--text-dim); line-height: 1.7; }
-  .chainArrow { text-align: center; color: var(--text-dim); font-size: 15px; padding: 2px 0; }
-  .narrowTagline { text-align: center; font-size: 11px; letter-spacing: 0.4px; margin-top: 10px; padding: 8px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); }
+  .chainNode .narrowDiff { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); text-decoration: line-through; margin-top: 4px; line-height: 1.6; }
+  .chainArrow { text-align: left; padding-left: 14px; color: var(--text-faint); font-size: 15px; padding-top: 2px; padding-bottom: 2px; }
+  /* Same reasoning as .chainNode above — a centered, heavily-feathered glow, not a
+     box, since this line also floats directly over the environment with nothing
+     but the shared text-shadow backing it. */
+  .narrowTagline {
+    font-size: 12px; letter-spacing: 0.3px; margin-top: 12px; padding: 10px 0 0 16px;
+    border-top: 1px solid var(--border-soft); color: var(--text-dim);
+    background: radial-gradient(ellipse 65% 160% at 50% 40%, rgba(8,6,4,0.28), transparent 78%);
+  }
   .narrowTagline .can { color: var(--allow); font-weight: 700; }
   .narrowTagline .cannot { color: var(--deny); font-weight: 700; }
 
-  /* Scenario C: ledger integrity — and, since Day 1/Block 2, every other "moment of
-     truth" verdict (revocation AFTER, attack-theatre final result) reuses this exact
-     same box unchanged, at the same hero scale, rather than inventing a second
-     visual language for "this is the proof that matters". */
-  .integrityBig { font-family: var(--mono); font-size: 19px; font-weight: 700; padding: 14px; border-radius: 6px; text-align: center; letter-spacing: 0.3px; transition: background-color 250ms ease, color 250ms ease, border-color 250ms ease; border: 1px solid var(--border); }
-  .integrityBig.valid { color: var(--allow); background: rgba(46,160,67,0.10); border-color: var(--allow); }
-  .integrityBig.invalid { color: var(--deny); background: rgba(229,72,77,0.10); border-color: var(--deny); }
+  .integrityBig { font-family: var(--mono); font-size: 23px; font-weight: 700; padding: 18px; border-radius: 4px; text-align: center; letter-spacing: 0.3px; transition: background-color 250ms ease, color 250ms ease, border-color 250ms ease; border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.35); }
+  .integrityBig.valid { color: var(--allow); background: rgba(87,160,110,0.10); border-color: var(--allow); }
+  .integrityBig.invalid { color: var(--deny); background: rgba(193,92,86,0.10); border-color: var(--deny); }
 
-  /* Hero type tier (Day 1, Block 2) — the SAME 19px/700/mono treatment the
-     attack-theatre stat values already used, now named and reused selectively for
-     the one or two most important numbers on a given screen. Not a new visual
-     language: same font, same weight, same color tokens as everywhere else. */
   .heroLine { font-family: var(--mono); font-size: 19px; font-weight: 700; color: var(--text); }
 
   @keyframes theatreEnter { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+  .reveal { animation: theatreEnter 200ms ease both; }
+  @keyframes moatPulse { 0% { transform: scale(1); } 50% { transform: scale(1.02); } 100% { transform: scale(1); } }
+  .integrityBig.pulse { animation: moatPulse 300ms ease; }
+
+  .budgetBar { height: 6px; border-radius: 3px; background: var(--panel-2); border: 1px solid var(--border); overflow: hidden; margin-top: 8px; }
+  .budgetBar .fill { height: 100%; width: 0%; background: var(--allow); transition: width 220ms ease; }
+  .budgetBar .fill.overspend { background: var(--deny); }
+  .attackSummary .stat.allowed .value { color: var(--allow); }
+  .attackSummary .stat.blocked .value { color: var(--deny); }
+
+  .verifierHint { margin-top: 10px; padding: 8px 0 8px 12px; border-left: 2px solid var(--border); font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+  .verifierHint .chainLabel { display: block; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.5px; color: var(--accent); text-transform: uppercase; margin-bottom: 4px; }
+
+  /* ---- Evidence workspace: LIVE LEDGER -> EXPORT/INTEGRITY -> INDEPENDENT VERIFIER
+     as one explicit vertical chain, reusing the exact same chainArrow/chainRole
+     vocabulary the rest of the app already uses for "this leads to that". ---- */
+  .evidenceFlow { max-width: 640px; }
+  .evidenceStage { padding: 4px 0 24px; }
+  .evidenceStage:last-child { padding-bottom: 0; }
+  .evidenceStage .chainRole { font-size: 15px; color: var(--text); font-weight: 700; margin-bottom: 8px; }
+
+  @media (max-width: 1180px) {
+    #authScreen { grid-template-columns: 1fr; margin: 60px auto; text-align: left; }
+  }
 </style>
 </head>
-<body>
+<body class="pre-auth">
+
+<!-- aegis-environment.png (the original single-photo environment) stays on disk,
+     unreferenced — the six workspace-specific photos below replace it as the
+     active environment, per the current integration request. -->
+<div id="environment" aria-hidden="true">
+  <img id="environmentImage" class="envImg active" src="/assets/overview.png" alt="" />
+  <img id="environmentImageB" class="envImg" src="/assets/overview.png" alt="" />
+  <div id="environmentShade"></div>
+  <div id="environmentVignette"></div>
+  <div id="environmentSignal"></div>
+</div>
+<div id="bgPulse"></div>
 
 <div id="demoModeBanner"></div>
 <header>
   <div>
-    <h1>AEGIS <span>— Trust Mesh Console</span></h1>
-    <div class="hint" style="margin-top:2px">Bounded, revocable financial authority for autonomous agents.</div>
+    <h1>AEGIS <span>— Trust Mesh Console</span><span class="headerTag">Control Plane</span></h1>
+    <div class="tagline">Bounded, revocable financial authority for autonomous agents.</div>
   </div>
-  <div id="principalBadge"></div>
+  <div class="shellRight">
+    <div id="shellStatus" class="shellStatus"><span class="dot"></span><span id="shellStatusText">—</span></div>
+    <div id="principalBadge"></div>
+  </div>
 </header>
+<nav id="navBar">
+  <button class="navBtn" id="navOverview">Overview</button>
+  <button class="navBtn" id="navAuthority">Authority</button>
+  <button class="navBtn" id="navMissions">Missions</button>
+  <button class="navBtn" id="navTransactions">Transactions</button>
+  <button class="navBtn" id="navSecurity">Security</button>
+  <button class="navBtn" id="navEvidence">Evidence</button>
+</nav>
 
-<div id="authScreen" class="panel">
-  <h2>Sign in</h2>
-  <label>Principal ID (new)</label>
-  <input id="newPrincipalId" placeholder="acme-corp" />
-  <div class="row" style="margin-top:8px">
-    <button id="createPrincipalBtn">Create principal</button>
+<div id="authScreen">
+  <div>
+    <div class="authWordmark">AEGIS<span>.</span></div>
+    <div class="authTagline">A trust layer between autonomous agents and the money they can move.</div>
+    <ul class="authHierarchy">
+      <li><b>Authority</b> — a cryptographic token, not a config value</li>
+      <li><b>Mission</b> — a bounded objective, narrower still</li>
+      <li><b>Decision</b> — recorded before anything executes</li>
+      <li><b>Evidence</b> — independently verifiable, offline</li>
+    </ul>
   </div>
-  <p class="hint">Creates a new principal and issues an API key — shown once, saved to this browser only.</p>
-  <hr style="border-color: var(--border); margin: 14px 0" />
-  <label>Existing API key</label>
-  <input id="existingApiKey" placeholder="paste an existing principal API key" />
-  <div class="row" style="margin-top:8px">
-    <button id="useExistingKeyBtn" class="secondary">Use this key</button>
+  <div class="surface">
+    <h2>Sign in</h2>
+    <label>Principal ID (new)</label>
+    <input id="newPrincipalId" placeholder="acme-corp" />
+    <div class="actionRow" style="margin-top:8px">
+      <button id="createPrincipalBtn">Create principal</button>
+    </div>
+    <p class="hint">Creates a new principal and issues an API key — shown once, saved to this browser only.</p>
+    <hr style="border-color: var(--border); margin: 14px 0" />
+    <label>Existing API key</label>
+    <input id="existingApiKey" placeholder="paste an existing principal API key" />
+    <div class="actionRow" style="margin-top:8px">
+      <button id="useExistingKeyBtn" class="secondary">Use this key</button>
+    </div>
+    <div id="authError" class="error"></div>
   </div>
-  <div id="authError" class="error"></div>
 </div>
 
 <div id="app">
-  <div class="grid">
+  <div id="workspaces">
 
-    <div class="stack">
-      <div class="panel">
-        <h2>Agents</h2>
-        <div id="agentTree"></div>
-        <hr style="border-color: var(--border); margin: 12px 0" />
-        <div id="createAgentForm">
-          <div class="hint" id="createAgentContext">Creating a root agent.</div>
-          <label>Agent ID</label>
-          <input id="agentId" placeholder="agent-flights" />
-          <label>Delegated goal</label>
-          <textarea id="delegatedGoal" rows="2" placeholder="Book the cheapest flights for Q3 conferences"></textarea>
-          <label>Max amount (USD)</label>
-          <input id="maxAmount" type="number" value="2000" />
-          <label>Categories (comma-separated)</label>
-          <input id="categories" value="flights,hotels,software" />
-          <label>Rails</label>
-          <div class="row">
-            <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text)"><input type="checkbox" id="railStripe" checked style="width:auto" /> stripe_test</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text)"><input type="checkbox" id="railX402" checked style="width:auto" /> mock_x402</label>
-          </div>
-          <div class="row" style="margin-top:10px">
-            <button id="createAgentBtn">Create</button>
-            <button id="cancelAttenuateBtn" class="secondary" style="display:none">Cancel</button>
-          </div>
-          <div id="agentError" class="error"></div>
+    <section class="workspace" id="wsOverview">
+      <div class="ovHero">
+        <div class="ovWordmark">AEGIS<span>.</span></div>
+        <div class="ovSubtitle">Trust Mesh Console</div>
+        <div class="ovStatement">Bounded. Revocable. Verifiable.</div>
+      </div>
+      <div class="factGrid">
+        <div class="factBlock goto" id="ovGotoAuthority">
+          <div class="sectionLabel" style="border:none;padding:0;margin:0">Authority</div>
+          <div class="factValue" id="ovAuthority">No agent selected</div>
+          <div class="factSub" id="ovAuthorityDetail"></div>
+        </div>
+        <div class="factBlock goto" id="ovGotoMission">
+          <div class="sectionLabel" style="border:none;padding:0;margin:0">Mission</div>
+          <div class="factValue" id="ovMission">No mission selected</div>
+          <div class="factSub" id="ovMissionDetail"></div>
+        </div>
+        <div class="factBlock goto" id="ovGotoBudget">
+          <div class="sectionLabel" style="border:none;padding:0;margin:0">Budget</div>
+          <div class="factValue" id="ovBudget">—</div>
+        </div>
+        <div class="factBlock goto" id="ovGotoDecision">
+          <div class="sectionLabel" style="border:none;padding:0;margin:0">Decision</div>
+          <div class="factValue" id="ovDecision">No transaction submitted yet</div>
+          <div class="factSub" id="ovDecisionDetail"></div>
+        </div>
+        <div class="factBlock goto" id="ovGotoLedger">
+          <div class="sectionLabel" style="border:none;padding:0;margin:0">Ledger</div>
+          <div class="factValue" id="ovLedger">—</div>
         </div>
       </div>
-    </div>
-
-    <div class="stack">
-      <div class="panel">
-        <h2>Submit transaction — <span id="activeAgentLabel" style="color: var(--text); text-transform: none">none selected</span></h2>
-        <div class="row">
-          <div>
-            <label>Amount (USD)</label>
-            <input id="txAmount" type="number" value="380" />
-          </div>
-          <div>
-            <label>Currency</label>
-            <input id="txCurrency" value="USD" />
-          </div>
-        </div>
-        <div class="row">
-          <div>
-            <label>Category</label>
-            <input id="txCategory" value="flights" />
-          </div>
-          <div>
-            <label>Rail</label>
-            <select id="txRail">
-              <option value="stripe_test">stripe_test</option>
-              <option value="mock_x402">mock_x402</option>
-            </select>
-          </div>
-        </div>
-        <label>Counterparty</label>
-        <input id="txCounterparty" value="acme-airlines" />
-        <label>Purpose</label>
-        <textarea id="txPurpose" rows="2">Round-trip flight for the Q3 vendor conference</textarea>
-        <label>Mission (optional — narrows this transaction to a bounded financial objective)</label>
-        <select id="txMission">
-          <option value="">None — use the agent's standing authority</option>
-        </select>
-        <div class="row" style="margin-top:10px">
-          <button id="simulateBtn" class="secondary">Simulate</button>
-          <button id="executeBtn">Execute</button>
-        </div>
-        <div id="result"></div>
-      </div>
-
-      <div class="panel">
-        <h2>Authority flow</h2>
-        <div id="graphView" class="hint">Select an agent to see how far its authority reaches — and where it narrows.</div>
-      </div>
-    </div>
-
-    <div class="stack">
-      <div class="panel">
-        <h2>Live decision feed</h2>
+      <div class="ovActivity">
+        <div class="sectionLabel">Recent activity</div>
         <div id="feed"></div>
       </div>
+    </section>
 
-      <div class="panel">
-        <h2>Audit ledger</h2>
-        <div id="chainStatus">—</div>
-        <button id="refreshLedgerBtn" class="secondary">Refresh</button>
-        <div id="ledgerEntries"></div>
+    <section class="workspace" id="wsAuthority">
+      <div class="wsHero">
+        <h2>Authority</h2>
+        <div class="chainSequence"><b>Root</b><span class="sep">→</span><b>Delegated</b><span class="sep">→</span><b>Attenuated</b><span class="sep">→</span><b>Mission bound</b></div>
+        <div class="hint">Authority only narrows at every step, and never widens.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about authority">ⓘ</button><span class="infoPopover" role="tooltip">A cryptographic token, not a config value — narrowing is enforced by the token itself, not a database flag that could be edited.</span></span></div>
       </div>
-    </div>
-
-  </div>
-
-  <div class="missionsGrid">
-    <div class="panel">
-      <h2>Missions</h2>
-      <div id="missionList"></div>
-      <hr style="border-color: var(--border); margin: 12px 0" />
-      <div class="hint">Create a bounded financial objective for one of your agents — the agent can then only spend under it exactly as far as its own capability token, plus these narrower limits, allow.</div>
-      <label>Mission ID</label>
-      <input id="missionIdInput" placeholder="mission-credits" />
-      <label>Agent</label>
-      <select id="missionAgentId"></select>
-      <label>Goal</label>
-      <textarea id="missionGoal" rows="2" placeholder="Purchase the required API credits from an approved provider, staying under $2,000."></textarea>
-      <div class="row">
-        <div>
-          <label>Budget</label>
-          <input id="missionBudget" type="number" value="2000" />
-        </div>
-        <div>
-          <label>Currency</label>
-          <input id="missionCurrency" value="USD" />
+      <div class="wsSplit">
+        <aside class="wsPane">
+          <div class="section">
+            <div class="sectionLabel">Agents</div>
+            <div id="agentTree"></div>
+          </div>
+          <div class="section">
+            <div class="sectionLabel">New agent</div>
+            <div class="hint" id="createAgentContext">Creating a root agent.</div>
+            <div id="createAgentForm">
+              <label>Agent ID</label>
+              <input id="agentId" placeholder="agent-flights" />
+              <label>Delegated goal</label>
+              <textarea id="delegatedGoal" rows="2" placeholder="Book the cheapest flights for Q3 conferences"></textarea>
+              <label>Max amount (USD)</label>
+              <input id="maxAmount" type="number" value="2000" />
+              <label>Categories (comma-separated)</label>
+              <input id="categories" value="flights,hotels,software" />
+              <label>Rails</label>
+              <div class="row">
+                <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text)"><input type="checkbox" id="railStripe" checked style="width:auto" /> stripe_test</label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text)"><input type="checkbox" id="railX402" checked style="width:auto" /> mock_x402</label>
+              </div>
+              <div class="row" style="margin-top:10px">
+                <button id="createAgentBtn">Create</button>
+                <button id="cancelAttenuateBtn" class="secondary" style="display:none">Cancel</button>
+              </div>
+              <div id="agentError" class="error"></div>
+            </div>
+          </div>
+        </aside>
+        <div class="wsMain">
+          <div class="section">
+            <div class="sectionLabel">Authority flow</div>
+            <div id="graphView" class="hint">Select an agent to see how far its authority reaches — and where it narrows.</div>
+          </div>
         </div>
       </div>
-      <label>Allowed categories (comma-separated, blank = same as agent's token)</label>
-      <input id="missionCategories" placeholder="flights" />
-      <label>Approved counterparties (comma-separated, blank = unrestricted)</label>
-      <input id="missionCounterparties" placeholder="acme-airlines" />
-      <label>Expires in (days)</label>
-      <input id="missionExpiryDays" type="number" value="30" />
-      <div class="row" style="margin-top:10px">
-        <button id="createMissionBtn">Create mission</button>
+    </section>
+
+    <section class="workspace" id="wsMissions">
+      <div class="wsHero">
+        <h2>Missions</h2>
+        <div class="chainSequence"><b>Objective</b><span class="sep">·</span><b>Boundary</b><span class="sep">·</span><b>Budget</b><span class="sep">·</span><b>Agent</b></div>
+        <div class="hint">Bounds authority to a specific objective.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about missions">ⓘ</button><span class="infoPopover" role="tooltip">Where an agent's standing authority becomes one bounded, narrower objective — it can spend only as far as its own capability token, and this mission's limits, both allow.</span></span></div>
       </div>
-      <div id="missionError" class="error"></div>
-    </div>
-
-    <div class="panel">
-      <h2>Mission detail — why money was or wasn't allowed to move</h2>
-      <div id="missionDetail" class="hint">Select a mission to see its goal, live budget, and full transaction history.</div>
-    </div>
-  </div>
-
-  <div id="demoTheatre">
-    <div class="theatreTitle">
-      <h2>Attack Theatre — Live Security Demonstrations</h2>
-      <div class="hint">Every result below comes from real requests against the real, unmodified Aegis pipeline. Nothing here is simulated.</div>
-    </div>
-    <div class="theatreGrid">
-
-      <div class="panel">
-        <h2>Concurrent budget race</h2>
-        <div class="hint">Fires many genuinely concurrent transaction attempts at one mission's budget — a real attack on the real atomic reservation primitive.</div>
-        <div class="row" style="margin-top:10px">
-          <button id="attackNewMissionBtn" class="secondary">New attack mission ($2,000)</button>
+      <div class="wsSplit">
+        <aside class="wsPane">
+          <div class="section">
+            <div class="sectionLabel">Missions</div>
+            <div id="missionList"></div>
+          </div>
+          <div class="section">
+            <div class="sectionLabel">New mission</div>
+            <div class="hint" style="margin-bottom:10px">A bounded financial objective for one of your agents.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about creating a mission">ⓘ</button><span class="infoPopover" role="tooltip">The agent can then only spend under it exactly as far as its own capability token, plus these narrower limits, allow.</span></span></div>
+            <label>Mission ID</label>
+            <input id="missionIdInput" placeholder="mission-credits" />
+            <label>Agent</label>
+            <select id="missionAgentId"></select>
+            <label>Goal</label>
+            <textarea id="missionGoal" rows="2" placeholder="Purchase the required API credits from an approved provider, staying under $2,000."></textarea>
+            <div class="row">
+              <div>
+                <label>Budget — the boundary this mission cannot exceed</label>
+                <input id="missionBudget" type="number" value="2000" class="budgetInput" />
+              </div>
+              <div>
+                <label>Currency</label>
+                <input id="missionCurrency" value="USD" />
+              </div>
+            </div>
+            <label>Allowed categories (comma-separated, blank = same as agent's token)</label>
+            <input id="missionCategories" placeholder="flights" />
+            <label>Approved counterparties (comma-separated, blank = unrestricted)</label>
+            <input id="missionCounterparties" placeholder="acme-airlines" />
+            <label>Expires in (days)</label>
+            <input id="missionExpiryDays" type="number" value="30" />
+            <div class="actionRow" style="margin-top:10px">
+              <button id="createMissionBtn">Create mission</button>
+            </div>
+            <div id="missionError" class="error"></div>
+          </div>
+        </aside>
+        <div class="wsMain">
+          <div class="section surface">
+            <h2>Mission detail — why money was or wasn't allowed to move</h2>
+            <div id="missionDetail" class="hint">Select a mission to see its goal, live budget, and full transaction history.</div>
+          </div>
         </div>
-        <div id="attackMissionInfo" class="hint" style="margin-top:6px">Select an agent (left panel), then create an attack mission.</div>
-        <div class="row" style="margin-top:8px">
-          <button id="attackLaunchBtn">Launch attack (20 × $150)</button>
-        </div>
-        <div class="attackSummary" id="attackSummary" style="display:none">
-          <div class="stat"><div class="value" id="attackStatAttempts">0</div><div class="label">Attempts</div></div>
-          <div class="stat"><div class="value" id="attackStatAllowed">0</div><div class="label">Allowed</div></div>
-          <div class="stat"><div class="value" id="attackStatBlocked">0</div><div class="label">Blocked</div></div>
-          <div class="stat"><div class="value" id="attackStatSpend">$0.00</div><div class="label">Authorized spend</div></div>
-        </div>
-        <div id="attackAttempts"></div>
-        <div id="attackVerified" class="hint" style="margin-top:6px"></div>
-        <div id="attackTrace" style="margin-top:12px"></div>
       </div>
+    </section>
 
-      <div class="panel">
-        <h2>Delegation &amp; revocation</h2>
-        <div class="hint">Authority narrows at every level of delegation and can never widen. Revoking a node instantly and provably cuts off everything beneath it.</div>
-        <div class="row" style="margin-top:10px">
-          <button id="revocationRunBtn">Run scenario</button>
-        </div>
-        <div id="chainVisual" class="chainFlow" style="margin-top:10px"></div>
-        <div id="revocationResults"></div>
+    <section class="workspace" id="wsTransactions">
+      <div class="wsHero">
+        <h2>Transactions</h2>
+        <div class="chainSequence"><b>Mission</b><span class="sep">→</span><b>Capability</b><span class="sep">→</span><b>Policy</b><span class="sep">→</span><b>Risk</b><span class="sep">→</span><b>Decision</b><span class="sep">→</span><b>Execution</b></div>
+        <div class="hint">A denial stops exactly where it actually stopped.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about denials">ⓘ</button><span class="infoPopover" role="tooltip">Nothing later in the pipeline ever renders as if it ran.</span></span></div>
       </div>
-
-      <div class="panel">
-        <h2>Ledger integrity</h2>
-        <div class="hint">Every decision is hash-chained and signed. Corrupting stored data directly in the database — bypassing Aegis entirely — is still detected.</div>
-        <div id="integrityStatus" class="integrityBig valid" style="margin-top:10px">✓ HASH CHAIN VERIFIED</div>
-        <div class="row" style="margin-top:10px">
-          <button id="integrityCheckBtn" class="secondary">Verify chain</button>
-          <button id="integrityTamperBtn" class="danger">Tamper latest entry</button>
+      <div class="wsSplit" style="grid-template-columns: 380px 1fr">
+        <div class="wsPane">
+          <div class="section surface">
+            <h2>Submit transaction — <span id="activeAgentLabel" style="color: var(--text); text-transform: none">none selected</span></h2>
+            <div class="row">
+              <div>
+                <label>Amount (USD)</label>
+                <input id="txAmount" type="number" value="380" />
+              </div>
+              <div>
+                <label>Currency</label>
+                <input id="txCurrency" value="USD" />
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>Category</label>
+                <input id="txCategory" value="flights" />
+              </div>
+              <div>
+                <label>Rail</label>
+                <select id="txRail">
+                  <option value="stripe_test">stripe_test</option>
+                  <option value="mock_x402">mock_x402</option>
+                </select>
+              </div>
+            </div>
+            <label>Counterparty</label>
+            <input id="txCounterparty" value="acme-airlines" />
+            <label>Purpose</label>
+            <textarea id="txPurpose" rows="2">Round-trip flight for the Q3 vendor conference</textarea>
+            <label>Mission (optional — narrows this transaction to a bounded financial objective)</label>
+            <select id="txMission">
+              <option value="">None — use the agent's standing authority</option>
+            </select>
+            <div class="row" style="margin-top:10px">
+              <button id="simulateBtn" class="secondary">Simulate</button>
+              <button id="executeBtn">Execute</button>
+            </div>
+          </div>
         </div>
-        <div id="integrityExplain" class="hint" style="margin-top:8px"></div>
-        <div class="hint" style="margin-top:8px">A separate, independent offline verifier can check this exact ledger without trusting this dashboard, this server, or any Aegis code at all — see verifier/README.md.</div>
+        <div class="wsMain">
+          <div class="section surface">
+            <h2>Decision inspector</h2>
+            <div id="result"></div>
+          </div>
+        </div>
       </div>
+    </section>
 
-    </div>
+    <section class="workspace" id="wsSecurity">
+      <div class="wsHero">
+        <h2>Security</h2>
+        <div class="chainSequence"><b>Concurrent attack</b><span class="sep">·</span><b>Revocation</b></div>
+        <div class="hint">Every result below comes from real requests against the real, unmodified Aegis pipeline. Nothing here is simulated.</div>
+      </div>
+      <section id="demoTheatre">
+        <div class="theatreGrid">
+
+          <div class="theatreCol">
+            <h2>Concurrent budget race</h2>
+            <div class="hint">20 concurrent attempts against one bounded budget.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about the concurrent budget race">ⓘ</button><span class="infoPopover" role="tooltip">A real attack on the real atomic reservation primitive — allowed, blocked, and zero overspend are all decided under genuine concurrent contention, not simulated.</span></span></div>
+            <div class="actionRow" style="margin-top:10px">
+              <button id="attackNewMissionBtn" class="secondary">New attack mission ($2,000)</button>
+            </div>
+            <div id="attackMissionInfo" class="hint" style="margin-top:6px">Select an agent, then create an attack mission.</div>
+            <div class="actionRow" style="margin-top:8px">
+              <!-- Label text is set by app.js from ATTACK_ATTEMPT_COUNT/ATTACK_AMOUNT_MINOR_UNITS
+                   — the same constants fireOne() uses to fire the real requests. -->
+              <button id="attackLaunchBtn">Launch attack</button>
+            </div>
+            <div class="attackSummary" id="attackSummary" style="display:none">
+              <div class="stat"><div class="value" id="attackStatAttempts">0</div><div class="label">Attempts</div></div>
+              <div class="stat allowed"><div class="value" id="attackStatAllowed">0</div><div class="label">Allowed</div></div>
+              <div class="stat blocked"><div class="value" id="attackStatBlocked">0</div><div class="label">Blocked</div></div>
+              <div class="stat"><div class="value" id="attackStatSpend">$0.00</div><div class="label">Authorized spend</div></div>
+            </div>
+            <div class="budgetBar" id="attackBudgetBar" style="display:none"><div class="fill" id="attackBudgetBarFill"></div></div>
+            <div id="attackAttempts"></div>
+            <div id="attackVerified" class="hint" style="margin-top:6px"></div>
+            <div id="attackTrace" style="margin-top:12px"></div>
+          </div>
+
+          <div class="theatreCol">
+            <h2>Delegation &amp; revocation</h2>
+            <div class="hint">Revoking a node cuts off everything beneath it, instantly.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about revocation">ⓘ</button><span class="infoPopover" role="tooltip">Authority narrows at every level of delegation and can never widen — revocation is instant and provable, not eventually-consistent.</span></span></div>
+            <div class="actionRow" style="margin-top:10px">
+              <button id="revocationRunBtn">Run scenario</button>
+            </div>
+            <div id="chainVisual" class="chainFlow" style="margin-top:10px"></div>
+            <div id="revocationResults"></div>
+          </div>
+
+        </div>
+      </section>
+      <div id="securityProdNote" class="hint" style="display:none">Live security demonstrations (concurrent budget race, revocation) run in demo mode. This deployment is in production mode — see the Evidence workspace for ledger verification, which always runs regardless of mode.</div>
+    </section>
+
+    <section class="workspace" id="wsEvidence">
+      <div class="wsHero">
+        <h2>Evidence</h2>
+        <div class="chainSequence"><b>Live ledger</b><span class="sep">→</span><b>Integrity</b><span class="sep">→</span><b>Independent verifier</b></div>
+        <div class="hint">Sequence, hash chain, and signature — checkable without trusting this dashboard, this server, or any Aegis code at all.</div>
+      </div>
+      <div class="evidenceFlow">
+        <div class="evidenceStage">
+          <div class="chainRole">Live ledger</div>
+          <div id="chainStatus">—</div>
+          <button id="refreshLedgerBtn" class="secondary">Refresh</button>
+          <div id="ledgerEntries"></div>
+        </div>
+        <div class="chainArrow">↓</div>
+        <div class="evidenceStage">
+          <div class="chainRole">Integrity check</div>
+          <div class="hint" style="margin-bottom:8px">Tampering with stored data directly is still detected.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about integrity checking">ⓘ</button><span class="infoPopover" role="tooltip">Every decision is hash-chained and signed — corrupting stored data directly in the database, bypassing Aegis entirely, is still caught.</span></span></div>
+          <div id="integrityStatus" class="integrityBig valid">✓ HASH CHAIN VERIFIED</div>
+          <div class="row" style="margin-top:10px">
+            <button id="integrityCheckBtn" class="secondary">Verify chain</button>
+            <button id="integrityTamperBtn" class="danger">Tamper latest entry</button>
+          </div>
+          <div id="integrityExplain" class="hint" style="margin-top:8px"></div>
+        </div>
+        <div class="chainArrow">↓</div>
+        <div class="evidenceStage">
+          <div class="chainRole">Independent verifier</div>
+          <div class="hint">A separate, offline tool re-derives every proof independently.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about the independent verifier">ⓘ</button><span class="infoPopover" role="tooltip">Trusting no Aegis code, this dashboard, or this server — it re-derives every entry's hash and signature from an exported copy of this ledger, and independently reconstructs each mission's budget accounting from that same export. See verifier/README.md.</span></span></div>
+        </div>
+      </div>
+    </section>
+
   </div>
 </div>
 
