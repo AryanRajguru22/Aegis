@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: aegis
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: node --experimental-wasm-modules dist/api/main.js
+    healthCheckPath: /demo-mode
+    envVars:
+      - key: AEGIS_DEMO_MODE
+        value: "true"
+      # AEGIS_DB_PATH must live directly under the disk's mountPath below.
+      # SQLite (node:sqlite) does not create missing parent directories —
+      # a nested path that doesn't already exist fails to open at boot.
+      - key: AEGIS_DB_PATH
+        value: /var/data/aegis.db
+      # Set these two in the Render dashboard (Environment tab), not here.
+      # Without them the process generates a fresh ephemeral keypair on every
+      # boot/restart, which invalidates every previously issued token and
+      # makes the prior ledger appear tampered. sync: false keeps Render from
+      # asking for a value in this file and from ever writing one back to it.
+      - key: AEGIS_ROOT_PRIVATE_KEY_HEX
+        sync: false
+      - key: AEGIS_LEDGER_PRIVATE_KEY_HEX
+        sync: false
+    disk:
+      name: aegis-data
+      mountPath: /var/data
+      sizeGB: 1

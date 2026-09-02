@@ -27,6 +27,9 @@
   "author": "",
   "license": "ISC",
   "type": "module",
+  "engines": {
+    "node": ">=22.5.0 <25.0.0"
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.120.0",
     "@biscuit-auth/biscuit-wasm": "^0.6.0",
