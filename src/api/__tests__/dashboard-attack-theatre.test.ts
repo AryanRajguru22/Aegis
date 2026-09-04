@@ -264,9 +264,13 @@ function loadAttackTheatreContext() {
   // (see dashboard-request-race.test.ts's identical technique and its doc comment on
   // why). In real use these are set exclusively by attackCreateMission(); this test is
   // specifically about launchBudgetAttack()'s own counter-rendering logic, so they're
-  // set directly here.
+  // set directly here. state.lab is seeded too — launchBudgetAttack()'s final
+  // verification GET goes through labApi(), which calls ensureLabIdentity() first;
+  // without a pre-seeded lab identity it would issue an extra, unexpected
+  // POST /lab/principals bootstrap call that this test's deferred-fetch harness never
+  // resolves, hanging the test indefinitely (found via a real, reproduced hang).
   vm.runInContext(
-    `${src}\nstate.activeAgentId = "agent-x";\nattackMissionId = "attack-test-1";\nattackAgentId = "agent-x";`,
+    `${src}\nstate.activeAgentId = "agent-x";\nattackMissionId = "attack-test-1";\nattackAgentId = "agent-x";\nstate.lab = { principalId: "lab-x", apiKey: "lab-key-x" };`,
     context,
     { filename: "app.js" }
   );
@@ -290,7 +294,7 @@ describe("Scenario A — launchBudgetAttack()'s final counters and verification 
     // dashboard-request-race.test.ts for the same, already-proven synchronous-
     // registration property this relies on.
     assert.equal(calls.length, 20, "all 20 attempts must reach the fetch call before any of them resolves");
-    for (const call of calls) assert.match(call.url, /^\/transactions$/);
+    for (const call of calls) assert.match(call.url, /^\/lab\/transactions$/);
 
     // Resolve with a DELIBERATELY unusual split — 3 allowed, 17 denied — chosen
     // specifically because it is NOT what a naive "budget / amount" calculation would
@@ -313,7 +317,7 @@ describe("Scenario A — launchBudgetAttack()'s final counters and verification 
     // the rendered "server-confirmed" text uses THIS value, not a client-computed one.
     await new Promise((r) => setTimeout(r, 0)); // let the Promise.all settle and the next fetch register
     assert.equal(calls.length, 21, "exactly one more call — the mission verification GET — must follow the 20 attempts");
-    assert.match(calls[20]!.url, /^\/missions\/attack-test-1$/);
+    assert.match(calls[20]!.url, /^\/lab\/missions\/attack-test-1$/);
     calls[20]!.resolve(
       fakeJsonResponse({
         missionId: "attack-test-1",

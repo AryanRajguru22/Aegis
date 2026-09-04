@@ -174,11 +174,13 @@ describe("createDemoTamperRouter — HTTP-level authentication and ownership", (
   });
 });
 
-describe("the demo route is structurally absent when demo mode is OFF — proven the same way main.ts wires it", () => {
-  test("hitting the tamper path against a plain, un-wrapped app (exactly what every other test's harness/production-off-mode app looks like) returns the app's OWN generic 404, never reaching the tamper logic", async () => {
-    // Mirrors main.ts exactly: outside the `if (demoMode)` branch, `createDemoTamperRouter`
-    // is never constructed and the wrapper never exists — the plain app is all that's
-    // ever listened on. This directly exercises that plain-app shape.
+describe("the demo route is structurally absent from any app it isn't explicitly mounted on — proven the same way production's own app is built", () => {
+  test("hitting the tamper path against a plain, un-wrapped app (exactly what production's own `createApp()` — see src/api/server.ts — looks like, since createDemoTamperRouter is never mounted there) returns the app's OWN generic 404, never reaching the tamper logic", async () => {
+    // Mirrors production exactly: createDemoTamperRouter is constructed and mounted
+    // ONLY by src/api/securityLab.ts, against that module's own isolated `:memory:`
+    // db (see that file and demoTamper.ts's own doc comments) — never by
+    // src/api/main.ts against the real, file-backed production `db`. This directly
+    // exercises the plain-app shape production's own pipeline actually has.
     const plainApp = express();
     plainApp.use((_req, res) => res.status(404).json({ error: "Not found" })); // the same catch-all shape createApp() itself uses
 

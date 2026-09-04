@@ -27,9 +27,16 @@ import { ApiError } from "./errors.js";
  *    already-stored `principal_id` (set only by LedgerStore.append() from trusted
  *    server-side data at write time — never client-influenced) matches the
  *    authenticated caller, so one principal's demo can never corrupt another's data.
- *  - The router this module exports is NEVER mounted in production — see
- *    src/api/main.ts, which only constructs and mounts it inside the same
- *    `if (demoMode)` branch that already gates every other demo-only behavior.
+ *  - The router this module exports is constructed exactly once in the whole
+ *    codebase — see src/api/securityLab.ts — and mounted only in front of the
+ *    Security Demonstration Lab's own isolated, freshly-created `db` (a `:memory:`
+ *    database with its own principals/agents/ledger, never production's). It is
+ *    never mounted against production's `db` from src/api/main.ts, in any server
+ *    mode: this is what makes the corruption safe to demonstrate at all. (An
+ *    earlier revision of this architecture gated the route behind
+ *    `AEGIS_DEMO_MODE` and pointed it at the real ledger directly — that approach
+ *    no longer exists; the isolated-lab db is what provides the safety guarantee
+ *    now, unconditionally, not an environment flag.)
  */
 
 export interface DemoTamperResult {
@@ -90,9 +97,10 @@ export function applyDemoLedgerTamper(db: DatabaseSync, principalId: string, seq
 
 /**
  * A single-route router, principal-authenticated, that exists purely to expose
- * applyDemoLedgerTamper over HTTP. Constructed and mounted ONLY by main.ts, ONLY
- * inside its existing `if (demoMode)` branch — see that file for why the route is
- * structurally absent (not merely conditionally rejected) in production.
+ * applyDemoLedgerTamper over HTTP. Constructed and mounted ONLY by
+ * src/api/securityLab.ts, against that module's own isolated `db` — see this
+ * file's module doc comment above for why that (not an `if (demoMode)` gate) is
+ * what makes production evidence structurally unreachable through this route.
  */
 export function createDemoTamperRouter(db: DatabaseSync, principals: PrincipalStore) {
   const router = Router();

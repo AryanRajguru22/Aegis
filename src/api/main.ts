@@ -24,9 +24,19 @@ import { errorHandler } from "./errors.js";
 import { wrapWithNotifications } from "./notifyingLedger.js";
 import { createSqliteIdempotencyCache } from "./idempotency.js";
 import { createSqliteMissionReservationStore } from "../mission/reservation.js";
-import { isDemoModeEnabled, createServerIntentJudge, selectRailAdapters } from "./demoMode.js";
-import { createDemoTamperRouter } from "./demoTamper.js";
+import { createInMemorySimulationCache } from "../decision/simulationCache.js";
+import {
+  isDemoModeEnabled,
+  createServerIntentJudge,
+  selectRailAdapters,
+  parseExplicitJudgeTimeoutMs,
+  defaultJudgeTimeoutMs,
+} from "./demoMode.js";
+import { GeminiIntentJudge } from "../risk/geminiJudge.js";
+import { requirePrincipalAuth } from "./auth.js";
+import { createSecurityLab } from "./securityLab.js";
 import type { AppDependencies } from "./deps.js";
+import type { IntentJudge } from "../risk/types.js";
 
 /**
  * The real deployment entrypoint — everything below assembles concrete
@@ -42,16 +52,72 @@ async function main(): Promise<void> {
   const demoMode = isDemoModeEnabled();
 
   const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
-  if (!demoMode && !anthropicApiKey) {
-    // Fail closed, not degrade: see docs/THREAT_MODEL.md §11 — a missing risk judge
-    // must never silently become "skip the risk check," so this process refuses to
-    // start at all rather than serve traffic without one. AEGIS_DEMO_MODE=true is the
-    // only way to bypass this, and doing so is loud (see the banner below), never silent.
+  const geminiApiKey = process.env.GEMINI_API_KEY;
+  const riskProvider = process.env.AEGIS_RISK_PROVIDER;
+
+  // Parsed before judge construction so a malformed value fails immediately, with its
+  // own specific message — never silently ignored, never coerced. `undefined` (unset)
+  // is valid here and means "use the provider-aware default computed below."
+  let explicitJudgeTimeoutMs: number | undefined;
+  try {
+    explicitJudgeTimeoutMs = parseExplicitJudgeTimeoutMs(process.env.AEGIS_JUDGE_TIMEOUT_MS);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+
+  // Fail closed, not degrade: see docs/THREAT_MODEL.md §11 — a missing/misconfigured
+  // risk judge must never silently become "skip the risk check," so this process
+  // refuses to start at all rather than serve traffic without one.
+  // createServerIntentJudge (src/api/demoMode.ts) is the single source of truth for
+  // every branch of this decision (demo mode, explicit AEGIS_RISK_PROVIDER, which
+  // key(s) are present, both-present ambiguity, neither-present) — constructing the
+  // real judge here, once, at startup avoids re-deriving that logic and means a
+  // misconfiguration is reported with one clear message before anything else happens.
+  let intentJudge: IntentJudge;
+  try {
+    intentJudge = createServerIntentJudge({ demoMode, anthropicApiKey, geminiApiKey, riskProvider });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    // A common cause of "the key is set in .env but this still fails" is simply that
+    // .env was never loaded into this process at all — npm start (see package.json)
+    // passes --env-file-if-exists=.env to node specifically to load it automatically,
+    // but a manually-invoked `node dist/api/main.js` without that flag will not see
+    // .env's contents, only real shell-exported variables. This hint costs nothing
+    // when the real cause is something else (a genuinely missing/wrong key), and
+    // never repeats or logs any key value itself.
     console.error(
-      "ANTHROPIC_API_KEY is required to start the Aegis server (the intent-consistency risk check needs a real judge), " +
-        "unless AEGIS_DEMO_MODE=true is explicitly set for a local, credential-free demo run."
+      'If you have a real value in ".env" but still see this, confirm this process was actually started with ' +
+        '"npm start" (or another invocation that passes --env-file-if-exists=.env to node) — a bare ' +
+        '"node dist/api/main.js" does not load .env on its own.'
     );
     process.exit(1);
+  }
+
+  // Provider-aware: an explicit AEGIS_JUDGE_TIMEOUT_MS always wins; otherwise Gemini
+  // gets a default sized for its real observed latency (20-28s live — see
+  // src/risk/__tests__/gemini-judge.live.test.ts), while demo mode and Anthropic keep
+  // the original, unchanged 8-second default. Checked against the judge actually
+  // constructed above (not against AEGIS_RISK_PROVIDER's raw value), so this is
+  // correct whether Gemini was chosen explicitly or auto-inferred from GEMINI_API_KEY
+  // alone.
+  const judgeTimeoutMs = explicitJudgeTimeoutMs ?? defaultJudgeTimeoutMs(intentJudge instanceof GeminiIntentJudge);
+  console.warn(
+    explicitJudgeTimeoutMs !== undefined
+      ? `Intent judge timeout: ${judgeTimeoutMs}ms (explicit, via AEGIS_JUDGE_TIMEOUT_MS)`
+      : `Intent judge timeout: ${judgeTimeoutMs}ms (default${intentJudge instanceof GeminiIntentJudge ? " — Gemini-aware" : ""}; set AEGIS_JUDGE_TIMEOUT_MS to override)`
+  );
+
+  if (demoMode && riskProvider) {
+    // A likely-unintentional combination: demo mode always wins over any explicit
+    // provider choice (see createServerIntentJudge), so an operator who set
+    // AEGIS_RISK_PROVIDER expecting a real judge to run would otherwise get no signal
+    // at all about why the deterministic stand-in is active instead. Loud, but not a
+    // failure — demo mode taking priority is correct, expected behavior.
+    console.warn(
+      `NOTE: AEGIS_RISK_PROVIDER="${riskProvider}" is set but has no effect — AEGIS_DEMO_MODE=true ` +
+        `always takes priority over any explicit risk-provider choice.`
+    );
   }
 
   if (demoMode) {
@@ -164,38 +230,52 @@ async function main(): Promise<void> {
     agents,
     ledger,
     revocationStore: createSqliteRevocationStore(db),
-    intentJudge: createServerIntentJudge({ demoMode, anthropicApiKey }),
+    intentJudge,
+    judgeTimeoutMs,
     rails: createRailRegistry(rails),
     idempotency,
     missions,
     reservations,
+    simulationCache: createInMemorySimulationCache(),
     demoMode,
   };
 
   const app = createApp(deps);
 
-  // Step 13, Scenario C: the ONE demo-only route (see demoTamper.ts) cannot simply be
-  // `app.use()`'d onto the app createApp() already returned — that app's own catch-all
-  // 404 handler and error handler are already the LAST middleware registered inside
-  // it, so anything appended afterward would never be reached (Express middleware runs
-  // in registration order). Instead, when — and only when — demo mode is enabled, the
-  // complete, entirely unmodified `app` is wrapped inside a tiny outer app that checks
-  // the demo route FIRST and falls through to the real app, untouched, for everything
-  // else. This keeps src/api/server.ts, createApp, and AppDependencies genuinely
-  // unchanged — the wrapper exists solely here, and solely when demoMode is true.
-  let listener = app;
-  if (demoMode) {
-    const wrapper = express();
-    wrapper.use(createDemoTamperRouter(db, principals));
-    wrapper.use(errorHandler);
-    wrapper.use(app);
-    listener = wrapper;
-  }
+  // The Security Demonstration Lab (src/api/securityLab.ts): a completely separate,
+  // isolated instance of this exact same pipeline — its own db, its own principals/
+  // agents/missions/ledger, always the deterministic demo intent judge — mounted at
+  // /lab, ALWAYS (regardless of AEGIS_DEMO_MODE), so the concurrent-budget-attack,
+  // revocation, and ledger-tamper demonstrations can run genuinely from a production
+  // deployment without ever touching real production evidence. This replaces the old
+  // Step-13 approach of tampering the REAL ledger directly (only ever reachable when
+  // AEGIS_DEMO_MODE=true) — that route no longer exists at all, in any mode; the real
+  // production ledger has no tamper route reachable over HTTP anymore.
+  //
+  // `lab` is reassigned wholesale — never patched in place — by POST /lab/reset,
+  // which is the ONLY way any part of the lab's state ever changes outside of normal
+  // API use. Mounted the same "thin wrapper in front of the real app" way the old
+  // demo-only route used to be mounted (see the removed comment this replaces):
+  // createApp()'s own catch-all/error handler are already the last middleware inside
+  // `app`, so anything meant to be reached first has to live on an outer app.
+  let lab = createSecurityLab({ mockX402Rail, knownPayers, demoPayerPublicKeyHex: publicKeyToHex(demoPayer.publicKey) });
+  const requirePrincipal = requirePrincipalAuth(principals);
+
+  const wrapper = express();
+  wrapper.post("/lab/reset", requirePrincipal, (_req, res) => {
+    lab = createSecurityLab({ mockX402Rail, knownPayers, demoPayerPublicKeyHex: publicKeyToHex(demoPayer.publicKey) });
+    res.status(200).json({ reset: true });
+  });
+  wrapper.use("/lab", (req, res, next) => lab.app(req, res, next));
+  wrapper.use(errorHandler);
+  wrapper.use(app);
+  const listener = wrapper;
 
   const port = Number(process.env.PORT ?? 8787);
   listener.listen(port, () => {
     console.log(`Aegis listening on http://localhost:${port}`);
     console.log(`Dashboard: http://localhost:${port}/`);
+    console.log(`Security Demonstration Lab (isolated, always available): http://localhost:${port}/lab`);
   });
 }
 
