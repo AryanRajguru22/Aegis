@@ -70,8 +70,15 @@ exercises this directly by simulating a restart mid-flight).
   (`AEGIS_DEMO_MODE=true`) it is a fixed, disclosed deterministic stand-in
   (`src/api/demoMode.ts`'s `createDemoIntentJudge()`) that always returns
   `"consistent"` and says so, explicitly, in its own rationale text — it performs no
-  analysis and must never be read as AI judgment. Outside demo mode it requires
-  `ANTHROPIC_API_KEY` and calls a real Anthropic model (`src/risk/anthropicJudge.ts`).
+  analysis and must never be read as AI judgment. Outside demo mode it is one of two
+  independent, real implementations — `AnthropicIntentJudge`
+  (`src/risk/anthropicJudge.ts`, requires `ANTHROPIC_API_KEY`) or `GeminiIntentJudge`
+  (`src/risk/geminiJudge.ts`, requires `GEMINI_API_KEY`) — selected by
+  `src/api/demoMode.ts`'s `createServerIntentJudge()`, never both at once; see the
+  README's "Risk judge provider" section for the exact selection precedence. Both
+  throw rather than guess a verdict on any malformed/unexpected response, which
+  `safeJudge()` turns into `"unavailable"` → `escalate`, so a judge failure can only
+  ever make the outcome stricter, never an `allow`.
   **This distinction is load-bearing for demo honesty**: every `ESCALATE` verdict
   reproducible in the current demo comes from the behavioral-baseline layer, not from
   AI judgment — see [TESTING.md](TESTING.md) and [DEMO.md](DEMO.md) for exactly how to
@@ -94,14 +101,54 @@ it. Modifying an entry, breaking the `prevHash` link, or forging a signature wit
 different key are each independently caught — both by Aegis's own `verifyChain()` and
 by the standalone [`verifier/`](../verifier/README.md) tool, which imports nothing from
 `src/` and re-derives integrity from only an exported ledger file and Aegis's public
-key. The Evidence workspace's demo-mode-only tamper route corrupts one stored entry
-directly in the database — bypassing Aegis's own write path entirely — and both checks
-still catch it.
+key.
+
+**The tamper demonstration never reaches production evidence.** The only tamper route
+in the entire codebase (`src/api/demoTamper.ts`'s `applyDemoLedgerTamper`) is
+constructed and mounted exactly once — by `src/api/securityLab.ts`, always bound to
+the Security Demonstration Lab's own isolated database (§8a below), never to
+production's. Production's ledger route (`src/api/routes/ledger.ts`, mounted from
+`src/api/main.ts`) has no tamper endpoint reachable over HTTP at all, in any server
+mode. What the route does, when reached, is narrow and fixed: it corrupts one stored
+entry's `data` directly in the database — bypassing the normal write path entirely,
+never touching `content_hash`, `signature`, or `prev_hash` — so the divergence is
+exactly the "content changed, signature didn't" case `verifyChain()` and the
+independent verifier both already prove they catch. It cannot repair, restore, or
+selectively fix an entry; the lab's own **reset** is the only way its state changes,
+and reset discards the whole instance rather than editing it in place.
 
 This is honestly described as **tamper-evident**, not "blockchain" and not
 "trustless" — there is a single ledger signing key held by the running process
 (`AEGIS_LEDGER_PRIVATE_KEY_HEX`), not distributed consensus. The property proven is
 *detection* of tampering, not elimination of a trusted operator.
+
+## 8a. Security Demonstration Lab isolation
+
+`src/api/securityLab.ts` builds a complete second instance of the exact same,
+unmodified pipeline (`createApp`, `decideTransaction`, `executeTransaction`, mission
+reservation, the hash-chained ledger) — mounted at `/lab`, always, regardless of
+`AEGIS_DEMO_MODE`. It is what the Security workspace's concurrent-budget-race,
+revocation, and ledger-tamper scenarios actually run against, so they can be
+demonstrated genuinely — against real code, not a mock — without any risk to real
+evidence. Concretely, it never shares with production:
+
+- **Identity** — a fresh root keypair and a fresh ledger signing keypair, generated at
+  construction, distinct from production's.
+- **Storage** — a private, in-memory (`:memory:`) SQLite database, never the
+  file-backed production database (`AEGIS_DB_PATH`).
+- **The intent judge** — always the deterministic demo stand-in
+  (`createDemoIntentJudge()`), never a real Anthropic/Gemini call, regardless of what
+  the real server is configured to use, so a lab session never spends real quota or
+  claims to be an AI judgment it isn't.
+
+The one thing deliberately shared is the mock `x402` merchant (and its payer-key
+registry) already running for production's own `mock_x402` rail — safe to share
+because it never moves real money either way, and duplicating it would mean running a
+second fake HTTP server for no safety benefit. **Resetting the lab** (`POST
+/lab/reset`) replaces this entire instance wholesale with a brand-new one; there is no
+partial or selective reset, matching the same principle §8 states for production
+evidence: state is never edited in place, only ever wholly recreated or (in
+production) permanently appended to.
 
 ## 9. Separation of decision and custody
 

@@ -1,0 +1,1333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AEGIS — Complete Demo, Operator &amp; Manual Testing Handbook</title>
+<style>
+  @page { size: A4; margin: 20mm 16mm 18mm 16mm; }
+  :root{
+    --bg:#0c0a08; --panel:#161310; --panel2:#1c1815; --line:#332c24;
+    --text:#f0ece2; --dim:#b7a792; --faint:#8a7c65;
+    --gold:#d9a55c; --gold-bright:#e8bd80; --copper:#b97a4a;
+    --allow:#7fbf8a; --deny:#d9776f; --escalate:#d9a55c;
+    --mono: "Consolas","SF Mono","Cascadia Code",monospace;
+    --serif: Georgia, "Iowan Old Style", Cambria, "Times New Roman", serif;
+    --sans: "Segoe UI", -apple-system, "Helvetica Neue", Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    background:var(--bg); color:var(--text); font-family:var(--sans);
+    font-size:10.3pt; line-height:1.55; margin:0;
+  }
+  h1,h2,h3,h4{ font-family:var(--serif); font-weight:700; color:var(--gold-bright); letter-spacing:0.2px; }
+  h1{ font-size:22pt; margin:0 0 6pt 0; }
+  h2{ font-size:15pt; margin:0 0 8pt 0; border-bottom:1px solid var(--line); padding-bottom:6pt; page-break-after:avoid; }
+  h3{ font-size:12pt; color:var(--gold); margin:14pt 0 5pt 0; page-break-after:avoid; }
+  h4{ font-size:10.6pt; color:var(--dim); margin:10pt 0 4pt 0; text-transform:uppercase; letter-spacing:0.6px; page-break-after:avoid; }
+  p{ margin:0 0 8pt 0; color:var(--text); }
+  a{ color:var(--gold); }
+  .dim{ color:var(--dim); }
+  .faint{ color:var(--faint); font-size:9pt; }
+  .section{ padding-top:2pt; }
+  .section.brk{ page-break-before:always; }
+  .nobreak{ break-inside:avoid; page-break-inside:avoid; }
+  .kicker{ text-transform:uppercase; letter-spacing:2px; font-size:8.5pt; color:var(--faint); margin-bottom:4pt; }
+  .pill{ display:inline-block; padding:2pt 8pt; border-radius:3pt; font-size:8.5pt; font-weight:700; letter-spacing:0.4px; }
+  .pill-allow{ background:rgba(127,191,138,0.15); color:var(--allow); border:1px solid rgba(127,191,138,0.4); }
+  .pill-deny{ background:rgba(217,119,111,0.15); color:var(--deny); border:1px solid rgba(217,119,111,0.4); }
+  .pill-escalate{ background:rgba(217,165,92,0.15); color:var(--escalate); border:1px solid rgba(217,165,92,0.4); }
+
+  table{ width:100%; border-collapse:collapse; margin:8pt 0 12pt 0; font-size:9.3pt; break-inside:avoid; }
+  th{ background:var(--panel2); color:var(--gold-bright); text-align:left; padding:5pt 7pt; border:1px solid var(--line); font-size:8.7pt; text-transform:uppercase; letter-spacing:0.3px; }
+  td{ padding:5pt 7pt; border:1px solid var(--line); vertical-align:top; color:var(--text); }
+  tr{ break-inside:avoid; }
+  code, .mono{ font-family:var(--mono); font-size:9pt; color:var(--gold-bright); background:rgba(217,165,92,0.08); padding:1pt 4pt; border-radius:2pt; }
+  pre{ font-family:var(--mono); font-size:8.7pt; background:var(--panel); border:1px solid var(--line); border-radius:4pt; padding:8pt 10pt; overflow-x:auto; color:var(--dim); line-height:1.5; break-inside:avoid; }
+  pre code{ background:none; padding:0; color:var(--dim); }
+
+  .card{ background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--gold); border-radius:4pt; padding:9pt 12pt; margin:8pt 0; break-inside:avoid; }
+  .card.deny{ border-left-color:var(--deny); }
+  .card.allow{ border-left-color:var(--allow); }
+  .card.escalate{ border-left-color:var(--escalate); }
+  .card h4{ margin-top:0; color:var(--gold-bright); }
+
+  .diagram{ background:var(--panel); border:1px solid var(--line); border-radius:6pt; padding:14pt 16pt; font-family:var(--mono); font-size:9.3pt; color:var(--gold-bright); text-align:center; line-height:1.9; margin:10pt 0; break-inside:avoid; }
+  .diagram .arrow{ color:var(--faint); font-size:8.5pt; }
+  .diagram .node{ display:inline-block; background:var(--panel2); border:1px solid var(--line); border-radius:4pt; padding:3pt 10pt; margin:2pt 0; }
+
+  .say{ background:rgba(217,165,92,0.07); border:1px solid rgba(217,165,92,0.25); border-radius:4pt; padding:7pt 10pt; margin:5pt 0; font-style:italic; color:var(--text); }
+  .say::before{ content:"SAY — "; font-style:normal; font-weight:700; color:var(--gold); }
+  .donotsay{ background:rgba(217,119,111,0.07); border:1px solid rgba(217,119,111,0.25); border-radius:4pt; padding:7pt 10pt; margin:5pt 0; color:var(--text); }
+  .donotsay::before{ content:"DO NOT SAY — "; font-weight:700; color:var(--deny); }
+
+  ul,ol{ margin:4pt 0 8pt 0; padding-left:18pt; }
+  li{ margin-bottom:3pt; }
+  .checklist li{ list-style:none; margin-left:-18pt; padding-left:18pt; position:relative; }
+  .checklist li::before{ content:"☐"; position:absolute; left:0; color:var(--gold); }
+
+  .toc-item{ display:flex; justify-content:space-between; border-bottom:1px dotted var(--line); padding:3pt 0; font-size:9.7pt; }
+  .toc-item .n{ color:var(--faint); width:20pt; flex:none; }
+  .toc-item .t{ flex:1; color:var(--text); }
+  .toc-item .p{ color:var(--faint); }
+  .toc-h{ font-family:var(--serif); color:var(--gold); font-weight:700; margin:10pt 0 3pt 0; font-size:10.5pt; }
+
+  .cover{ height:257mm; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; page-break-after:always; }
+  .cover .wordmark{ font-family:var(--serif); font-size:52pt; font-weight:700; color:var(--text); letter-spacing:2px; }
+  .cover .wordmark span{ color:var(--gold); }
+  .cover .subtitle{ font-family:var(--sans); font-size:13pt; letter-spacing:6px; color:var(--gold); text-transform:uppercase; margin-top:6pt; }
+  .cover .thesis{ font-family:var(--serif); font-size:16pt; color:var(--gold-bright); margin-top:22pt; font-style:italic; }
+  .cover .handbook-title{ font-size:13pt; color:var(--dim); margin-top:30pt; letter-spacing:0.5px; }
+  .cover .event{ font-size:10.5pt; color:var(--faint); margin-top:6pt; letter-spacing:1px; text-transform:uppercase; }
+  .cover .quote{ max-width:120mm; font-size:10.5pt; color:var(--dim); margin-top:40pt; line-height:1.7; font-style:italic; }
+  .cover .rule{ width:60mm; height:1px; background:linear-gradient(90deg,transparent,var(--gold),transparent); margin:18pt 0; }
+
+  .feat-table td:first-child{ color:var(--gold-bright); font-weight:600; white-space:nowrap; width:120pt; }
+  .qa-q{ color:var(--gold-bright); font-weight:700; margin-top:10pt; }
+  .qa-short{ margin:3pt 0; }
+  .qa-deep{ color:var(--dim); font-size:9.3pt; }
+  .qa-avoid{ color:var(--deny); font-size:9pt; }
+
+  .cheat{ background:var(--panel); border:1px solid var(--gold); border-radius:6pt; padding:12pt 14pt; }
+  .cheat h4{ color:var(--gold-bright); border-bottom:1px solid var(--line); padding-bottom:3pt; }
+
+  footer.pagefoot{ position:fixed; bottom:0; }
+</style>
+</head>
+<body>
+
+<!-- ============ COVER ============ -->
+<div class="cover">
+  <div class="wordmark">AEGIS<span>.</span></div>
+  <div class="subtitle">Trust Mesh Console</div>
+  <div class="thesis">Bounded. Revocable. Verifiable.</div>
+  <div class="rule"></div>
+  <div class="handbook-title">Complete Demo, Operator &amp; Manual Testing Handbook</div>
+  <div class="event">Razorpay Buildathon</div>
+  <div class="quote">"How to give autonomous agents financial authority<br>without giving them unlimited trust."</div>
+  <div class="faint" style="margin-top:34pt;">v1.0 &nbsp;·&nbsp; Generated from the current working repository and live application</div>
+</div>
+
+<!-- ============ TOC placeholder — filled by later edit ============ -->
+<div class="section" id="toc">
+<h2>Table of Contents</h2>
+<div id="toc-body">
+<div class="toc-h">Understand</div>
+<div class="toc-item"><span class="n">1</span><span class="t">Executive Summary — What AEGIS Actually Is</span></div>
+<div class="toc-item"><span class="n">2</span><span class="t">The Mental Model</span></div>
+<div class="toc-item"><span class="n">3</span><span class="t">Complete Feature Catalog</span></div>
+<div class="toc-item"><span class="n">4</span><span class="t">Workspace-by-Workspace Operator Guide</span></div>
+
+<div class="toc-h">Go Deep</div>
+<div class="toc-item"><span class="n">5</span><span class="t">Authority — Deep Explanation</span></div>
+<div class="toc-item"><span class="n">6</span><span class="t">Missions — Deep Explanation</span></div>
+<div class="toc-item"><span class="n">7</span><span class="t">Transaction Pipeline — Deep Explanation</span></div>
+<div class="toc-item"><span class="n">8</span><span class="t">ALLOW / DENY / ESCALATE</span></div>
+<div class="toc-item"><span class="n">9</span><span class="t">AI / Anthropic — Where Intelligence Actually Lives</span></div>
+<div class="toc-item"><span class="n">10</span><span class="t">Concurrent Budget Race (Hero)</span></div>
+<div class="toc-item"><span class="n">11</span><span class="t">Revocation (Hero)</span></div>
+<div class="toc-item"><span class="n">12</span><span class="t">Evidence / Ledger — Deep Explanation</span></div>
+<div class="toc-item"><span class="n">13</span><span class="t">Tamper Detection (Hero — the Climax)</span></div>
+<div class="toc-item"><span class="n">14</span><span class="t">Independent Verifier</span></div>
+
+<div class="toc-h">Test It</div>
+<div class="toc-item"><span class="n">15</span><span class="t">Complete Manual Testing Plan</span></div>
+<div class="toc-item"><span class="n">16</span><span class="t">Failure / Troubleshooting Guide</span></div>
+<div class="toc-item"><span class="n">17</span><span class="t">Pre-Demo Reset Checklist</span></div>
+
+<div class="toc-h">Win the Room</div>
+<div class="toc-item"><span class="n">18</span><span class="t">What Features Can Make Us Win</span></div>
+<div class="toc-item"><span class="n">19</span><span class="t">Questions Judges May Ask</span></div>
+<div class="toc-item"><span class="n">20</span><span class="t">What NOT to Say During the Demo</span></div>
+<div class="toc-item"><span class="n">21</span><span class="t">Presentation Style &amp; Opening</span></div>
+<div class="toc-item"><span class="n">22</span><span class="t">Final 7–8 Minute Master Demo Script</span></div>
+<div class="toc-item"><span class="n">23</span><span class="t">2-Minute Emergency Version</span></div>
+<div class="toc-item"><span class="n">24</span><span class="t">30-Second Elevator Version</span></div>
+<div class="toc-item"><span class="n">25</span><span class="t">Final One-Page Cheat Sheet</span></div>
+</div>
+</div>
+
+<!-- ============ 1. EXECUTIVE SUMMARY ============ -->
+<div class="section brk" id="s1">
+<div class="kicker">Part 1</div>
+<h2>1. Executive Summary — What AEGIS Actually Is</h2>
+
+<h3>The problem</h3>
+<p>Autonomous AI agents are starting to take real-world actions on someone's behalf —
+buying things, subscribing to services, paying other agents. The moment an agent can
+initiate a payment, "who is this agent" (authentication) stops being the interesting
+question. The interesting question is: <b>what, specifically, is this agent allowed to
+do right now, within what limit, granted by whom, and can that be taken back
+instantly if something looks wrong?</b> An API key answers the first question. It says
+nothing about the second.</p>
+
+<h3>What AEGIS actually controls</h3>
+<p>AEGIS sits between an agent's decision to act and the money actually moving. Every
+agent holds a cryptographic capability token (not a raw credential) with a maximum
+amount, currency, allowed categories, and allowed payment rails baked into the token
+itself. That authority can be narrowed further — delegated to a sub-agent with tighter
+limits (<b>attenuation</b>), and bounded again to one specific, budgeted objective (a
+<b>mission</b>). Every transaction is evaluated against all of these boundaries before
+anything executes, the outcome is one of three verdicts (<code>ALLOW</code> /
+<code>DENY</code> / <code>ESCALATE</code>), and every step — not just the final
+outcome — is written to a signed, hash-chained ledger that a completely separate tool
+can verify without trusting AEGIS's own code.</p>
+
+<h3>The three words, precisely</h3>
+<table>
+<thead><tr><th style="width:110pt">Word</th><th>What it means in this implementation, specifically</th></tr></thead>
+<tr><td><b class="dim" style="color:var(--gold)">Bounded</b></td><td>A capability token's caveats (amount, currency, categories, rails, expiry) are enforced by the token's own cryptographic structure (a Biscuit authorizer check), not a database flag an application could quietly ignore. A mission narrows further, on top of the token, never past it.</td></tr>
+<tr><td><b style="color:var(--gold)">Revocable</b></td><td>Revoking one agent marks its token identifier revoked; every descendant token's verification checks its full ancestry, so revoking one node fails every token derived from it on its very next use — no separate cascade step to run.</td></tr>
+<tr><td><b style="color:var(--gold)">Verifiable</b></td><td>Every ledger entry is Ed25519-signed and hash-chained to the one before it. A standalone tool (<code>verifier/</code>) that imports nothing from AEGIS's own code can independently re-derive whether that history is intact, from only an export file and AEGIS's public key.</td></tr>
+</table>
+
+<h3 class="nobreak">A. The 20-second explanation</h3>
+<div class="card nobreak">
+<p style="margin:0">"AEGIS gives an AI agent a cryptographic permission slip instead of a
+password — one with a spending cap, a category list, and an expiry baked in. That
+permission can only get narrower as it's handed down to sub-agents, it can be revoked
+instantly and the revocation actually sticks, and every decision is recorded in a way
+that can be checked afterward by a tool that doesn't trust AEGIS itself."</p>
+</div>
+
+<h3 class="nobreak">B. The 60-second explanation</h3>
+<div class="card nobreak">
+<p style="margin:0">"Once an agent can spend money for you, checking a single
+transaction against a rule isn't enough — you need to know it can still only spend
+what it was actually delegated, that you can cut off its authority instantly and have
+that <i>actually</i> propagate to everything it delegated further, and that you can
+prove afterward nothing was tampered with. AEGIS answers all three. Authority is a
+signed capability token, not a config value — it narrows every time it's delegated
+and can never widen. A mission layers a bounded objective and its own budget on top of
+that token. Every transaction runs through a real decision pipeline — mission budget
+gate, capability check, risk evaluation — and resolves to allow, deny, or escalate,
+never a silent default. Revoking an agent cuts off every sub-agent beneath it,
+instantly, with no cleanup step. And every decision — not just successful ones — is
+written to a hash-chained, signed ledger that a separate, independent tool can verify
+without trusting a single line of AEGIS's own code. That's the whole system:
+bounded, revocable, verifiable."</p>
+</div>
+
+<h3>Why authentication alone is insufficient</h3>
+<p>Authentication answers "is this really agent X." It says nothing about whether
+agent X's <i>this specific request</i> — $380, category <code>flights</code>,
+counterparty <code>acme-airlines</code>, right now — is something X was actually
+delegated to do. A stolen or over-trusted API key is authenticated perfectly and can
+still do anything the backend allows. A capability token collapses "who" and "what,
+exactly, up to how much" into one cryptographically checkable object, so the answer to
+"is this allowed" never depends on trusting an application's own bookkeeping.</p>
+</div>
+
+<!-- ============ 2. THE MENTAL MODEL ============ -->
+<div class="section" id="s2">
+<div class="kicker">Part 2</div>
+<h2>2. The Mental Model</h2>
+
+<div class="diagram">
+<div class="node">PRINCIPAL <span class="faint">(human/org — signs in, holds the API key)</span></div><br><span class="arrow">↓ issues a capability token</span><br>
+<div class="node">ROOT AUTHORITY <span class="faint">(an agent's own token — amount, currency, categories, rails, expiry)</span></div><br><span class="arrow">↓ attenuate — narrower only</span><br>
+<div class="node">DELEGATED / ATTENUATED AUTHORITY <span class="faint">(a sub-agent's token, minted from the parent's)</span></div><br><span class="arrow">↓ optionally bind to</span><br>
+<div class="node">MISSION <span class="faint">(a bounded objective — its own goal, its own cumulative budget, narrower category/counterparty allowlists)</span></div><br><span class="arrow">↓ a transaction is attempted</span><br>
+<div class="node">MISSION GATE → CAPABILITY / POLICY → RISK <span class="faint">(baseline + intent judge)</span></div><br><span class="arrow">↓ composite verdict</span><br>
+<div class="node" style="border-color:var(--gold)">ALLOW &nbsp;·&nbsp; DENY &nbsp;·&nbsp; ESCALATE</div><br><span class="arrow">↓ on ALLOW only</span><br>
+<div class="node">EXECUTION <span class="faint">(a rail adapter — mock_x402 in demo mode)</span></div><br><span class="arrow">↓ every stage above, regardless of outcome</span><br>
+<div class="node">EVIDENCE <span class="faint">(signed, hash-chained ledger entry)</span></div><br><span class="arrow">↓ checkable by</span><br>
+<div class="node">INDEPENDENT VERIFICATION <span class="faint">(a separate tool — trusts nothing AEGIS reports)</span></div>
+</div>
+
+<table>
+<thead><tr><th style="width:130pt">Layer</th><th>What it actually is in this codebase</th></tr></thead>
+<tr><td>Principal</td><td>Created at sign-in (<code>POST /principals</code>); issues an API key stored locally in the browser. Owns every agent it creates.</td></tr>
+<tr><td>Root authority</td><td>A Biscuit capability token minted at agent creation (<code>POST /agents</code>) — caveats: max amount, currency, categories, rails, expiry.</td></tr>
+<tr><td>Delegated / attenuated authority</td><td>A child token minted from a parent's (<code>POST /agents/:parentId/attenuate</code>). Structurally cannot be wider than the parent in any caveat — enforced at mint time, not by convention.</td></tr>
+<tr><td>Mission</td><td>Bounded metadata layered on top of a token (<code>POST /missions</code>) — its own goal, its own cumulative budget, optional narrower category/counterparty allowlists. Grants no authority itself; the token remains the cryptographic boundary underneath it.</td></tr>
+<tr><td>Mission gate → capability/policy → risk</td><td>The actual order a <code>POST /transactions</code> call runs through — see Part 7. A denial or escalation stops exactly there; nothing later ever runs.</td></tr>
+<tr><td>Allow / deny / escalate</td><td><code>combineRiskSignals()</code>'s composite verdict — see Part 8.</td></tr>
+<tr><td>Execution</td><td>Rail-agnostic dispatch to a registered adapter — <code>mock_x402</code> only in demo mode.</td></tr>
+<tr><td>Evidence</td><td>Every stage above writes its own signed, hash-chained ledger entry — allow, deny, and escalate are recorded exactly as durably as a success.</td></tr>
+<tr><td>Independent verification</td><td><code>verifier/</code> — a standalone tool, zero imports from AEGIS's own code, given only an export file and AEGIS's public key.</td></tr>
+</table>
+</div>
+
+<!-- ============ 3. FEATURE CATALOG ============ -->
+<div class="section" id="s3">
+<div class="kicker">Part 3</div>
+<h2>3. Complete Feature Catalog</h2>
+<p class="dim">Every meaningful implemented feature, in one scannable reference. Features
+marked <span class="pill pill-escalate">HERO</span> get a full deep-dive later in this
+handbook (Parts 5–14) — this table is the fast-reference version: what it does, why it
+exists, where it lives in the UI, which module implements it, and the one-line demo
+move. "Common misunderstanding" and "what not to claim" for each are folded into the
+relevant deep-dive section rather than repeated here.</p>
+
+<table class="feat-table">
+<thead><tr><th>Feature</th><th>What / Why</th><th>UI</th><th>Module</th><th>Demo move</th></tr></thead>
+
+<tr><td>Principal / session</td><td>The account layer. Sign-in issues an API key stored only in this browser — no server-side session cookie.</td><td>Sign-in screen</td><td><code>src/api/routes/principals.ts</code></td><td>Create a fresh principal ID to start clean</td></tr>
+
+<tr><td>Root authority <span class="pill pill-escalate">HERO</span></td><td>An agent's own capability token — the base of the trust chain.</td><td>Authority → New agent</td><td><code>src/capability/keys.ts</code>, <code>authorize.ts</code></td><td>Create an agent, point at the chain diagram</td></tr>
+
+<tr><td>Delegation / attenuation <span class="pill pill-escalate">HERO</span></td><td>Mint a narrower child token from a parent's — structurally cannot widen.</td><td>Authority → Select → Attenuate</td><td><code>src/capability/caveats.ts</code></td><td>Attenuate a sub-agent, show the narrower cap</td></tr>
+
+<tr><td>Capability constraints — amount, currency, categories, rails, expiry</td><td>The exact caveats a token (or attenuation) can express; each is a hard boundary checked by the Biscuit authorizer.</td><td>New agent / Attenuate forms</td><td><code>src/capability/types.ts</code>, <code>caveats.ts</code></td><td>Fill the form fields, name each one aloud</td></tr>
+
+<tr><td>Revocation <span class="pill pill-escalate">HERO</span></td><td>Marks a token's identifier revoked; live-checked on every subsequent verification.</td><td>Authority → Revoke; Security → Delegation &amp; revocation</td><td><code>src/capability/revocation.ts</code>, <code>state/revocations.ts</code></td><td>Run the Security workspace's before/after scenario</td></tr>
+
+<tr><td>Ancestor revocation</td><td>A descendant's verification walks its full ancestry — revoking a parent fails every child, no per-child cleanup.</td><td>Same as above (multi-generation chain)</td><td><code>src/capability/authorize.ts</code></td><td>Attenuate 2 levels deep, revoke the root, show both fail</td></tr>
+
+<tr><td>Mission creation / objective / budget <span class="pill pill-escalate">HERO</span></td><td>A bounded goal layered on a token — its own cumulative budget, must be ⊆ the token's own bounds.</td><td>Missions → New mission</td><td><code>src/state/missions.ts</code>, <code>mission/policy.ts</code></td><td>Create one, point at "budget — the boundary this mission cannot exceed"</td></tr>
+
+<tr><td>Mission–agent binding</td><td>Every mission is registered against exactly one agent; referential integrity enforced at creation.</td><td>Missions → Agent dropdown</td><td><code>src/state/missions.ts</code></td><td>Show the agent field is required, not optional</td></tr>
+
+<tr><td>Mission expiry / cancellation</td><td>A mission has its own <code>expiresAt</code> (≤ the token's); <code>POST /missions/:id/cancel</code> transitions status.</td><td>Missions form / Mission Detail</td><td><code>src/api/routes/missions.ts</code></td><td>Mention only if asked — not a headline demo beat</td></tr>
+
+<tr><td>Atomic budget reservation <span class="pill pill-escalate">HERO</span></td><td>One SQL <code>UPDATE</code> computes <code>budget − reserved − settled ≥ requested</code> and reserves in the same write.</td><td>Missions Detail (live remaining figure); Security (attack)</td><td><code>src/mission/reservation.ts</code></td><td>Concurrent budget race — see Part 10</td></tr>
+
+<tr><td>Transaction composer</td><td>Amount, currency, category, rail, counterparty, purpose, optional mission — the request shape submitted for evaluation.</td><td>Transactions form</td><td><code>src/api/routes/transactions.ts</code></td><td>Fill one field at a time, narrate what each maps to</td></tr>
+
+<tr><td>Mission gate validation</td><td>First deterministic check on a mission-scoped transaction — status, counterparty allowlist, category allowlist, then budget.</td><td>Decision Inspector (pipeline stage 1)</td><td><code>src/mission/policy.ts</code>'s <code>checkMissionGate</code></td><td>DENY scenario — see Part 7</td></tr>
+
+<tr><td>Capability / policy validation</td><td>Verifies the token's full Biscuit chain against the request — amount, currency, category, rail, expiry, live revocation check.</td><td>Decision Inspector (pipeline stage 2)</td><td><code>src/capability/authorize.ts</code></td><td>Revoked-authority DENY scenario</td></tr>
+
+<tr><td>Risk evaluation — behavioral baseline</td><td>Two disclosed heuristics: transaction-rate window, amount-deviation vs. this agent's own history.</td><td>Decision Inspector "Behavioral:" line</td><td><code>src/risk/baseline.ts</code></td><td>ESCALATE scenario — see Part 7 &amp; 9</td></tr>
+
+<tr><td>Risk evaluation — intent judge</td><td>Pluggable interface; demo mode = disclosed deterministic stand-in, production = real Anthropic call.</td><td>Decision Inspector "Intent:" line</td><td><code>src/risk/types.ts</code>, <code>anthropicJudge.ts</code>, <code>api/demoMode.ts</code></td><td>Read the rationale text aloud — it names itself</td></tr>
+
+<tr><td>ALLOW / DENY / ESCALATE <span class="pill pill-escalate">HERO</span></td><td>The one composite verdict every transaction resolves to.</td><td>Decision Inspector</td><td><code>src/decision/decide.ts</code></td><td>One of each, back to back — see Part 8</td></tr>
+
+<tr><td>Execution — mock_x402 rail</td><td>Self-built mock rail, fixed price catalog, its own tiny internal HTTP server (loopback only).</td><td>Decision Inspector "Execution" stage</td><td><code>src/rails/mockX402/</code></td><td>Point at the settlement reference in a real ALLOW</td></tr>
+
+<tr><td>Execution — stripe_test rail</td><td>Real Stripe test-mode adapter; exists in code, never registered while <code>AEGIS_DEMO_MODE=true</code> regardless of key presence.</td><td>Transactions → Rail dropdown (present, non-functional in demo mode)</td><td><code>src/rails/stripeTestRail.ts</code></td><td>Only mention if directly asked — see Part 9</td></tr>
+
+<tr><td>Live decision feed</td><td>Overview workspace's recent-activity stream reflecting real API calls as they happen.</td><td>Overview → Recent activity</td><td><code>public/app.js</code>, <code>GET /stream</code> (SSE)</td><td>Glance at it between acts, don't dwell</td></tr>
+
+<tr><td>Concurrent budget race <span class="pill pill-escalate">HERO</span></td><td>20 real concurrent transaction attempts against one bounded mission budget.</td><td>Security → Concurrent budget race</td><td><code>src/mission/reservation.ts</code></td><td>Launch attack, read the "ZERO OVERSPEND" banner aloud</td></tr>
+
+<tr><td>Ledger — sequence, hash chain, signatures <span class="pill pill-escalate">HERO</span></td><td>Every entry: monotonic seq, content hash, previous-entry hash, Ed25519 signature.</td><td>Evidence → Live ledger</td><td><code>src/state</code>'s ledger module</td><td>Refresh, read one entry's hash/prev/sig aloud</td></tr>
+
+<tr><td>Integrity verification / tamper detection <span class="pill pill-escalate">HERO</span></td><td>Recomputes the chain; a demo-only route corrupts one stored entry directly, bypassing AEGIS's own write path.</td><td>Evidence → Integrity check</td><td><code>src/state</code> + <code>demo-tamper</code> route</td><td>Verify → Tamper → Verify again — see Part 13</td></tr>
+
+<tr><td>Independent verifier <span class="pill pill-escalate">HERO</span></td><td>A standalone tool, zero imports from AEGIS, re-derives integrity from an export + the public key.</td><td>Not in the dashboard — a separate CLI (mention, run in terminal if time permits)</td><td><code>verifier/</code></td><td>Show the export + CLI commands — see Part 14</td></tr>
+
+<tr><td>Demo Mode</td><td>One env var that swaps the risk judge and the rail set behind their existing interfaces — nothing else changes.</td><td>Every Decision Inspector's rationale text names it</td><td><code>src/api/demoMode.ts</code></td><td>Read the intent judge's own rationale aloud</td></tr>
+
+<tr><td>Six-workspace UI / environment</td><td><b>Product UX, not a technical trust property</b> — six navigable workspaces, each with its own background photograph, crossfade, parallax, and verdict-colored environment reaction.</td><td>Top nav bar</td><td><code>public/index.html</code>, <code>app.js</code></td><td>Let it run in the background — never the thing you explain</td></tr>
+
+<tr><td>Reduced motion / accessibility</td><td>Parallax and idle drift are paused under <code>prefers-reduced-motion</code>; every interactive element is keyboard-reachable.</td><td>Whole app</td><td><code>public/app.js</code></td><td>Mention only if asked about accessibility</td></tr>
+</table>
+</div>
+
+<!-- ============ 4. WORKSPACE OPERATOR GUIDE ============ -->
+<div class="section" id="s4">
+<div class="kicker">Part 4</div>
+<h2>4. Workspace-by-Workspace Operator Guide</h2>
+
+<h3>4.1 — Overview</h3>
+<table>
+<tr><td style="width:110pt"><b>Purpose</b></td><td>The thesis at a glance, before anything is selected. First screen a judge sees.</td></tr>
+<tr><td><b>What's on screen</b></td><td>Wordmark + "Bounded. Revocable. Verifiable." · a 5-cell fact grid (Authority / Mission / Budget / Decision / Ledger — each links to its own workspace) · a recent-activity feed.</td></tr>
+<tr><td><b>What to click</b></td><td>Nothing, initially — this is a look-and-say screen. Later, the fact-grid cells are clickable shortcuts back to each workspace.</td></tr>
+<tr><td><b>On success/change</b></td><td>Every cell updates live as you act elsewhere — Authority shows the selected agent, Budget shows the mission's remaining figure, Decision shows the last verdict color-coded.</td></tr>
+<tr><td><b>Point out</b></td><td>That the whole product's claim fits in three words, visible before a single click.</td></tr>
+<tr><td><b>Don't waste time on</b></td><td>The recent-activity feed in detail — glance, move on.</td></tr>
+<tr><td><b>Visually impressive</b></td><td>The environment photograph, full-bleed, readable typography over it.</td></tr>
+<tr><td><b>Technically important</b></td><td>Nothing computed here — it's a pure read view over the same state every other workspace writes to.</td></tr>
+<tr><td><b>Likely question</b></td><td>"Is this just a mockup?" → <span class="say">Everything you see updates from real API responses — nothing on this screen is hardcoded.</span></td></tr>
+</table>
+
+<h3>4.2 — Authority</h3>
+<table>
+<tr><td style="width:110pt"><b>Purpose</b></td><td>Create agents and watch authority narrow as it's delegated.</td></tr>
+<tr><td><b>What's on screen</b></td><td>Agent tree (left) · New agent / Attenuate form (left, context-switches) · Authority Flow diagram (right) — a live root-to-selected-agent lineage.</td></tr>
+<tr><td><b>What to click</b></td><td><code>Select</code> on an agent card · <code>Attenuate</code> to open the sub-agent form pre-targeted at that parent · <code>Create</code> to submit · <code>Revoke</code> (with a confirm dialog) to cut off a node.</td></tr>
+<tr><td><b>On success</b></td><td>New card appears in the tree, "Delegated (attenuated)" label on children, narrower cap visibly smaller; Authority Flow redraws with the new node.</td></tr>
+<tr><td><b>On failure</b></td><td>Inline <code>#agentError</code> text — e.g. a duplicate agent ID, or an attenuation attempt wider than the parent (rejected before any token is minted).</td></tr>
+<tr><td><b>Point out</b></td><td>The Authority Flow diagram's ring narrowing visually, and that struck-through categories in the child's card are exactly what was removed, not just "fewer."</td></tr>
+<tr><td><b>Don't waste time on</b></td><td>Filling every field manually on stage — pre-type common values before the demo starts if you can (see Part 25).</td></tr>
+<tr><td><b>Visually impressive</b></td><td>The narrowing authority-flow visualization.</td></tr>
+<tr><td><b>Technically important</b></td><td>Attenuation is enforced by <code>src/capability/caveats.ts</code> at mint time — a wider child is structurally impossible, not merely discouraged.</td></tr>
+<tr><td><b>Likely questions</b></td><td>"Can a sub-agent get its authority back widened later?" → <span class="say">No — attenuation is one-directional by construction; there's no operation that widens an existing token.</span></td></tr>
+</table>
+
+<h3>4.3 — Missions</h3>
+<table>
+<tr><td style="width:110pt"><b>Purpose</b></td><td>Bind a bounded, budgeted objective to a selected agent.</td></tr>
+<tr><td><b>What's on screen</b></td><td>Mission list (left) · New mission form (left) · Mission Detail (right) — goal, live remaining budget, authority boundary, expiry, transaction history.</td></tr>
+<tr><td><b>What to click</b></td><td>Select an agent first (Authority tab) · fill Mission ID / Goal / Budget / Categories / Counterparties / Expiry · <code>Create mission</code> · click a mission card to open its detail.</td></tr>
+<tr><td><b>On success</b></td><td>Mission card appears "ACTIVE"; Mission Detail shows <code>budget − settled = remaining</code> as a large live figure.</td></tr>
+<tr><td><b>On failure</b></td><td><code>#missionError</code> — e.g. a mission category not present in the agent's own token categories (rejected at creation, before the mission ever exists).</td></tr>
+<tr><td><b>Point out</b></td><td>"Budget — the boundary this mission cannot exceed" label text, and that Mission Detail explicitly shows the arithmetic (<code>800.00 USD budget − 0.00 USD settled = 800.00 USD remaining</code>).</td></tr>
+<tr><td><b>Don't waste time on</b></td><td>Expiry/cancellation mechanics — real, but not a headline beat.</td></tr>
+<tr><td><b>Visually impressive</b></td><td>The live remaining-budget figure updating after a transaction.</td></tr>
+<tr><td><b>Technically important</b></td><td>A mission cannot express anything wider than its agent's own token — checked at creation (<code>validateMissionAgainstToken</code>), independent of the runtime gate.</td></tr>
+<tr><td><b>Likely question</b></td><td>"What if I set a mission budget bigger than the agent's max amount?" → <span class="say">Allowed on purpose — a mission's budget is cumulative across many transactions, the token's cap is per-transaction. They're different dimensions.</span></td></tr>
+</table>
+
+<h3>4.4 — Transactions</h3>
+<table>
+<tr><td style="width:110pt"><b>Purpose</b></td><td>Submit a real transaction and watch the full pipeline resolve.</td></tr>
+<tr><td><b>What's on screen</b></td><td>Submit form (left) — amount, currency, category, rail, counterparty, purpose, optional mission · Decision Inspector (right) — verdict badge, reason, and every pipeline stage with its own outcome.</td></tr>
+<tr><td><b>What to click</b></td><td><code>Simulate</code> (dry-run, no execution) or <code>Execute</code> (real evaluation, executes on allow).</td></tr>
+<tr><td><b>On success (ALLOW)</b></td><td>Green badge, every stage lit <code>ALLOW</code>, an execution stage with a real settlement reference, mission budget bar moves, environment green signal flash.</td></tr>
+<tr><td><b>On failure (DENY/ESCALATE)</b></td><td>Red or gold badge, the exact stage that stopped it highlighted, nothing after that stage shown as having run.</td></tr>
+<tr><td><b>Point out</b></td><td>That a DENY's pipeline visibly stops at one specific stage — "a denial stops exactly where it actually stopped," not a generic rejection.</td></tr>
+<tr><td><b>Don't waste time on</b></td><td>Re-explaining every form field twice — say it once while filling ALLOW, then just narrate values for DENY/ESCALATE.</td></tr>
+<tr><td><b>Visually impressive</b></td><td>The stage-by-stage pipeline trace, verdict colors matching the environment signal flash.</td></tr>
+<tr><td><b>Technically important</b></td><td>Policy runs before risk, always — a network-dependent AI call never runs on a transaction that was already going to be denied (see Part 7).</td></tr>
+<tr><td><b>Likely question</b></td><td>"Does Simulate actually call the same pipeline?" → <span class="say">Yes — <code>/simulate</code> runs the identical decision logic, it just never reaches execution.</span></td></tr>
+</table>
+
+<h3>4.5 — Security</h3>
+<table>
+<tr><td style="width:110pt"><b>Purpose</b></td><td>Prove two properties under real adversarial conditions: budgets survive concurrency, revocation actually cuts off trust.</td></tr>
+<tr><td><b>What's on screen</b></td><td>Concurrent Budget Race panel (left) · Delegation &amp; Revocation panel (right).</td></tr>
+<tr><td><b>What to click</b></td><td>Select an agent first · <code>New attack mission ($2,000)</code> · <code>Launch attack (20 × $380)</code> · separately, <code>Run scenario</code> for revocation.</td></tr>
+<tr><td><b>On success</b></td><td>Attack: a per-attempt grid (✓/✗), live counters, a green "ZERO OVERSPEND — BUDGET HELD" banner, server-confirmed spend figure. Revocation: before/after verdicts at large scale, the second one denied with the real revocation reason.</td></tr>
+<tr><td><b>On failure</b></td><td>These scenarios are designed to demonstrate correct denial, not to fail themselves — a genuine failure here (overspend, or a post-revocation ALLOW) would be a real bug, not an expected outcome.</td></tr>
+<tr><td><b>Point out</b></td><td>The exact numbers (attempts / allowed / blocked / spend) are server-confirmed, re-fetched independently — not just counted client-side.</td></tr>
+<tr><td><b>Don't waste time on</b></td><td>Explaining SQL internals unless a technical judge asks — the banner and the number say enough.</td></tr>
+<tr><td><b>Visually impressive</b></td><td>Twenty real, concurrent network requests resolving live in front of the room.</td></tr>
+<tr><td><b>Technically important</b></td><td>The reservation is one atomic SQL statement — this is what actually prevents the race, not client-side pacing.</td></tr>
+<tr><td><b>Likely question</b></td><td>"What if two requests hit the exact same instant?" → <span class="say">That's exactly what this demonstrates — 20 fire genuinely concurrently, and the database's own atomicity, not request ordering, decides who wins.</span></td></tr>
+</table>
+
+<h3>4.6 — Evidence</h3>
+<table>
+<tr><td style="width:110pt"><b>Purpose</b></td><td>Show the ledger, verify it, then prove tampering is detectable.</td></tr>
+<tr><td><b>What's on screen</b></td><td>Live ledger (recent entries — seq, kind, hash, prev, sig, timestamp) · Integrity check (big status banner + Verify/Tamper buttons) · Independent verifier pointer.</td></tr>
+<tr><td><b>What to click</b></td><td><code>Refresh</code> · <code>Verify chain</code> · <code>Tamper latest entry</code> (demo-mode only) · <code>Verify chain</code> again.</td></tr>
+<tr><td><b>On success</b></td><td>Green "✓ HASH CHAIN VERIFIED".</td></tr>
+<tr><td><b>On tamper</b></td><td>Red "✗ INTEGRITY VIOLATION DETECTED", with the exact corrupted entry named underneath, and the header badge switching to "Ledger tampered."</td></tr>
+<tr><td><b>Point out</b></td><td>That the tamper button modifies stored data <i>directly</i>, bypassing AEGIS's own write path entirely — this is not "AEGIS pretending to catch its own edit."</td></tr>
+<tr><td><b>Don't waste time on</b></td><td>Reading multiple ledger entries aloud — one is enough to show the hash/prev/sig shape.</td></tr>
+<tr><td><b>Visually impressive</b></td><td>The status flip from green to red on the same button, live.</td></tr>
+<tr><td><b>Technically important</b></td><td>The independent verifier reaches the same conclusion from a completely separate code path — this workspace's own check is not the only witness.</td></tr>
+<tr><td><b>Likely question</b></td><td>"Could someone edit the database <i>and</i> the hash to hide it?" → answered fully in Part 13.</td></tr>
+</table>
+</div>
+
+<!-- ============ 5. AUTHORITY DEEP ============ -->
+<div class="section brk" id="s5">
+<div class="kicker">Part 5 — The Heart of AEGIS</div>
+<h2>5. Authority — Deep Explanation</h2>
+
+<p>Every agent's authority is a <a href="https://www.biscuitsec.org/">Biscuit</a>
+capability token — a signed, self-contained credential whose caveats (max amount,
+currency, allowed categories, allowed rails, expiry) are checked by a cryptographic
+authorizer, not by an application trusting its own database. <b>Root authority</b> is
+minted at agent creation. <b>Delegation</b> (<code>attenuate</code>) mints a child
+token from a parent's. <b>Attenuation</b> is the mathematical property that makes
+delegation safe: a child token's caveats can only be equal to or narrower than its
+parent's, in every dimension, simultaneously.</p>
+
+<h3>What is mathematically guaranteed vs. what is demo configuration</h3>
+<table>
+<thead><tr><th style="width:230pt">Guaranteed by the implementation</th><th>Demo configuration (could be set differently)</th></tr></thead>
+<tr><td>A child token can never have a larger <code>maxAmountMinorUnits</code>, an added category not in the parent's list, an added rail not in the parent's list, or a later expiry than its parent. Enforced in <code>src/capability/caveats.ts</code> before a child token is ever minted.</td><td>Which specific amounts/categories/rails you type into the demo form (2000 → 800, <code>flights,hotels,software</code> → <code>flights</code>) — these numbers are illustrative, not fixed by the code.</td></tr>
+<tr><td>Revoking a token makes every descendant's <i>next</i> verification fail — this is checked live, not by a background cleanup job.</td><td>How many generations deep you demonstrate (one attenuation vs. three).</td></tr>
+<tr><td>A token's caveats are checked by the Biscuit authorizer against the actual transaction request — a category or rail not in the token's own allowlist is a hard authorization failure.</td><td>Whether you show a capability-layer denial (no mission) or a mission-layer denial (mission gate fires first) — see Part 6 for which wins.</td></tr>
+</table>
+
+<h3>Worked example</h3>
+<div class="diagram" style="text-align:left;">
+<b style="color:var(--gold)">Root</b> &nbsp;— agent <code>travel-agent</code><br>
+&nbsp;&nbsp;$2,000 max &nbsp;·&nbsp; flights, hotels, software &nbsp;·&nbsp; stripe_test, mock_x402<br><br>
+<span class="arrow">↓ attenuate</span><br><br>
+<b style="color:var(--gold)">Delegated / Attenuated</b> &nbsp;— agent <code>flights-only</code><br>
+&nbsp;&nbsp;$800 max &nbsp;·&nbsp; flights only &nbsp;·&nbsp; <span class="faint">(hotels, software struck through)</span><br><br>
+<span class="arrow">↓ bind to</span><br><br>
+<b style="color:var(--gold)">Mission</b> &nbsp;— <code>mission-flights</code><br>
+&nbsp;&nbsp;$800 cumulative budget &nbsp;·&nbsp; category: flights &nbsp;·&nbsp; counterparty: acme-airlines<br><br>
+<span class="arrow">↓ transaction attempt</span><br><br>
+<b style="color:var(--gold)">Transaction</b> &nbsp;— $380, flights, acme-airlines → <span class="pill pill-allow">ALLOW</span>
+</div>
+<p class="faint">Every number above is a real, reproducible value from this handbook's
+own verification pass (see Part 25) — not a hypothetical.</p>
+
+<h3>Revocation propagation</h3>
+<p>Revoking <code>travel-agent</code> (the root, above) does not touch
+<code>flights-only</code>'s stored token at all — nothing is edited, deleted, or
+pushed to it. What changes is that <code>flights-only</code>'s <i>next</i>
+verification includes checking its ancestor chain, and the root is now marked
+revoked. That single check is what fails — instantly, for every descendant, with no
+enumeration of "which sub-agents does this affect."</p>
+</div>
+
+<!-- ============ 6. MISSIONS DEEP ============ -->
+<div class="section" id="s6">
+<div class="kicker">Part 6</div>
+<h2>6. Missions — Deep Explanation</h2>
+
+<h3>Why missions exist if capabilities already exist</h3>
+<p>A capability token bounds what an agent could ever do, in general, for its entire
+lifetime — its ceiling. A mission bounds what an agent is doing <i>right now, for one
+objective</i> — a cumulative budget spent across possibly many transactions, plus
+optional narrower category/counterparty restrictions, with its own expiry. An agent
+with a $5,000 standing token might be given five different $500 missions over time,
+each one auditable and revocable independently of the others and of the token itself.
+Without missions, every transaction would only ever be checked against the same
+broad, unchanging ceiling — there would be no way to express "for this specific
+purchase run, no more than $800, only flights, only this vendor."</p>
+
+<h3>Which mission limits exist</h3>
+<ul>
+<li><b>Budget</b> — a cumulative cap (<code>budgetMinorUnits</code>), enforced as <code>spent + reserved + requested ≤ budget</code>.</li>
+<li><b>Currency</b> — must exactly match the underlying token's currency.</li>
+<li><b>Allowed categories</b> — optional; if set, must be a subset of the token's own categories.</li>
+<li><b>Approved counterparties</b> — optional; missions can restrict counterparties even though the token itself has no counterparty concept at all.</li>
+<li><b>Expiry</b> — must not be later than the token's own expiry.</li>
+</ul>
+<p class="faint">Missions do not declare a rail restriction — rail allowlisting remains
+entirely the token's concern (<code>src/mission/policy.ts</code>'s own doc comment is
+explicit about this).</p>
+
+<h3>What if the mission allows something the token doesn't — or vice versa?</h3>
+<div class="card nobreak">
+<h4>Effective permission = intersection of boundaries</h4>
+<p style="margin:0">This is enforced two ways, not one. <b>At mission-creation time</b>,
+<code>validateMissionAgainstToken()</code> rejects outright any mission whose currency
+doesn't match, whose categories aren't a subset of the token's, or whose expiry is
+later than the token's — so a mission wider than its token cannot even be created.
+<b>At transaction time</b>, both checks still run independently anyway (mission gate,
+then capability/policy) — so even if a mission's stored constraints were somehow
+looser than the token (they structurally can't be, but the runtime doesn't assume
+that), the token's own check still applies on top. There is no code path where a
+transaction is allowed because the mission alone said yes; both boundaries must agree.</p>
+</div>
+
+<h3>Which one is checked first — and why it's not just "either"</h3>
+<p>The mission gate (<code>checkMissionGate</code>) runs <i>before</i>
+<code>decideTransaction</code>'s capability/policy check, in the route handler. Order:
+mission status → counterparty allowlist → category allowlist → budget, then
+capability/policy, then risk. This is deliberate: the mission gate is the cheapest,
+purely local check (no cryptographic verification, no network), so a mission-scoped
+denial short-circuits before the more expensive capability check ever runs.</p>
+</div>
+
+<!-- ============ 7. TRANSACTION PIPELINE DEEP ============ -->
+<div class="section" id="s7">
+<div class="kicker">Part 7</div>
+<h2>7. Transaction Pipeline — Deep Explanation</h2>
+
+<table>
+<thead><tr><th style="width:150pt">Stage</th><th>Input</th><th>Check</th><th>Possible failure</th></tr></thead>
+<tr><td>1. Mission gate + reservation</td><td>The mission (if attached), the candidate amount</td><td>Status active? Counterparty allowed? Category allowed? Budget not exceeded? — one atomic SQL write</td><td>Any of the four → immediate <code>DENY</code>, nothing reserved</td></tr>
+<tr><td>2. Capability / policy</td><td>The presented Biscuit token, the transaction facts</td><td>Full ancestry chain valid, not revoked, every caveat (amount/currency/category/rail/expiry) satisfied by the Biscuit authorizer</td><td>Any caveat fails or ancestor revoked → <code>DENY</code>, reservation released</td></tr>
+<tr><td>3. Risk — behavioral baseline</td><td>This agent's own transaction history</td><td>Rate window (5+ in 60s) and amount-deviation (&gt;3× mean, needs 3+ prior) heuristics</td><td>Either flag → forces <code>ESCALATE</code> regardless of intent judge</td></tr>
+<tr><td>4. Risk — intent judge</td><td>Delegated goal, transaction purpose</td><td>Demo: always "consistent." Production: real Anthropic semantic comparison</td><td>"inconsistent"/"ambiguous"/"unavailable" → <code>ESCALATE</code></td></tr>
+<tr><td>5. Composite verdict</td><td>Both risk signals</td><td><code>combineRiskSignals()</code> — see Part 8's table</td><td>—</td></tr>
+<tr><td>6. Execution (allow only)</td><td>The verdict, the rail adapter</td><td>Rail-specific settlement</td><td>Adapter-level failure — see Scenario F below</td></tr>
+<tr><td>7. Ledger write</td><td>Every stage's own outcome</td><td>Signed, hash-chained append</td><td>Not user-visible as a "failure" — this always happens</td></tr>
+</table>
+<p><b>Why the stop point matters:</b> the Decision Inspector visibly highlights exactly
+which stage produced the final verdict — nothing rendered after that stage ever ran.
+A DENY at stage 1 never touched the capability layer at all; a DENY at stage 2 never
+ran the (network-dependent) intent judge. This is a real property of the code, not a
+UI simplification — <code>decideTransaction</code>'s own doc comment states the
+ordering is deliberate and load-bearing precisely so risk can never override a policy
+denial into an allow.</p>
+
+<h3>Six scenarios, exact manual test procedure</h3>
+
+<div class="card allow nobreak">
+<h4>Scenario A — Valid transaction → <span class="pill pill-allow">ALLOW</span></h4>
+<p><b>Setup:</b> agent with token cap ≥ amount, optional mission with budget ≥ amount.<br>
+<b>Input:</b> Amount 380 · Category <code>flights</code> · Rail <code>mock_x402</code> · Counterparty <code>acme-airlines</code> (must match mission's allowlist if one is attached).<br>
+<b>Expected:</b> Every pipeline stage green, execution stage shows a real <code>mockx402_…</code> settlement reference.</p>
+</div>
+
+<div class="card deny nobreak">
+<h4>Scenario B — Over mission budget → <span class="pill pill-deny">DENY</span></h4>
+<p><b>Setup:</b> same mission as above, already has some spend.<br>
+<b>Input:</b> Amount larger than remaining budget (e.g. 5000 against an $800 mission).<br>
+<b>Expected:</b> <code>DENY</code> at the mission-gate stage — reason text:
+<code>"Transaction would exceed this mission's budget (spent so far: X, requested: Y, budget: Z)"</code>. Capability/risk stages never run.</p>
+</div>
+
+<div class="card deny nobreak">
+<h4>Scenario C — Wrong category → <span class="pill pill-deny">DENY</span></h4>
+<p><b>Input, mission attached:</b> a category not in the mission's <code>allowedCategories</code> → mission-gate reason
+<code>"Category "X" is not in this mission's allowed categories (…)"</code>.<br>
+<b>Input, no mission (standing authority only):</b> a category not in the token's own
+allowlist → the capability layer's Biscuit authorizer itself rejects it; the surfaced
+reason is a raw <code>"Failed check(s): …"</code> string derived directly from the
+failed Biscuit rule, not a hand-written sentence — a real, technically interesting
+detail: <b>the token's caveats are enforced by the cryptographic authorizer, not
+application code translating them into English.</b></p>
+</div>
+
+<div class="card deny nobreak">
+<h4>Scenario D — Invalid / revoked authority → <span class="pill pill-deny">DENY</span></h4>
+<p><b>Setup:</b> a valid agent, then revoked (Authority → Revoke, or the Security workspace's scenario).<br>
+<b>Input:</b> the exact same transaction that succeeded before revocation.<br>
+<b>Expected:</b> <code>DENY</code> at the capability stage — reason text:
+<code>"Token (or an ancestor) was revoked at &lt;timestamp&gt;: &lt;reason&gt;"</code>.</p>
+</div>
+
+<div class="card escalate nobreak">
+<h4>Scenario E — Behavioral anomaly → <span class="pill pill-escalate">ESCALATE</span></h4>
+<p><b>Setup:</b> a fresh agent with no mission attached (standing authority). Submit
+<b>three</b> transactions at a small, consistent amount (e.g. $50) to build history.<br>
+<b>Input:</b> a fourth transaction at more than 3× that mean (e.g. $600 against a $50
+mean = 12×).<br>
+<b>Expected:</b> <code>ESCALATE</code> — reason:
+<code>"Behavioral anomaly detected: Amount (X) is N.Nx this agent's historical average (Y), over the 3x threshold"</code>. The Decision Inspector's <code>Intent:</code> line still shows <code>consistent</code> — it is the <b>behavioral</b> layer alone that forced this, independent of the intent judge.</p>
+</div>
+
+<div class="card nobreak">
+<h4>Scenario F — Execution / rail mismatch or failure</h4>
+<p>The mock_x402 rail has a fixed price catalog (<code>acme-airlines:flights = $380</code>,
+<code>acme-hotels:hotels = $210</code>, <code>cloudco:software = $1500</code>). An
+amount that doesn't match the quoted price for that counterparty/category fails at
+settlement even after an <code>ALLOW</code> verdict — this is a genuine, reproducible
+execution-layer failure, not a policy denial. It's a good answer if a judge asks
+"what happens if the rail itself rejects something policy already approved" — but not
+a headline demo beat; mention it only if asked.</p>
+</div>
+</div>
+
+<!-- ============ 8. ALLOW/DENY/ESCALATE ============ -->
+<div class="section" id="s8">
+<div class="kicker">Part 8</div>
+<h2>8. ALLOW / DENY / ESCALATE</h2>
+
+<table>
+<thead><tr><th>Outcome</th><th>Meaning</th><th>Typical trigger</th><th>Executes?</th><th>Judge sees</th><th>How to demonstrate</th></tr></thead>
+<tr><td><span class="pill pill-allow">ALLOW</span></td><td>Every stage passed — mission gate, capability, and risk all clear</td><td>Valid amount/category/counterparty/rail within all boundaries, consistent intent, no behavioral flags</td><td>Yes — dispatched to the rail adapter</td><td>Green badge, all-green pipeline, a real settlement reference</td><td>Scenario A</td></tr>
+<tr><td><span class="pill pill-deny">DENY</span></td><td>A deterministic boundary was violated — policy said no</td><td>Over budget, wrong category/counterparty, revoked authority, expired/inactive mission</td><td>No — stops at the failing stage</td><td>Red badge, the exact failing stage highlighted, everything after it never rendered as having run</td><td>Scenarios B, C, D</td></tr>
+<tr><td><span class="pill pill-escalate">ESCALATE</span></td><td>Policy passed, but risk evaluation flagged something worth a second look</td><td>Behavioral anomaly (rate or amount deviation) or an intent judgment of inconsistent/ambiguous/unavailable</td><td>No — same as deny, execution never runs</td><td>Gold badge, the specific risk reason named, the <code>Intent:</code> and <code>Behavioral:</code> lines both visible</td><td>Scenario E</td></tr>
+</table>
+
+<h3>ESCALATE, precisely</h3>
+<p><b>Why it exists:</b> not every risky-looking transaction is actually invalid — an
+unusually large purchase might be entirely legitimate. Escalate is the verdict for
+"policy has no objection, but this doesn't look like this agent's normal behavior, so
+don't execute silently." <b>How it differs from deny:</b> a deny means a hard boundary
+was crossed (budget, category, revoked authority) — deterministic and non-negotiable.
+An escalate means every deterministic boundary was satisfied, and the risk layer alone
+raised a flag. <b>Does it stop execution?</b> Yes — identically to deny, nothing
+executes on escalate in the current implementation. <b>What risk condition triggers
+it, in the reproducible demo path:</b> the behavioral-baseline heuristics in
+<code>src/risk/baseline.ts</code> — a rate spike or an amount far outside this agent's
+own history. <b>Is Anthropic involved in demo mode?</b> No — the intent judge in demo
+mode always returns <code>"consistent"</code>; it is architecturally impossible for
+the demo-mode intent judge to be the reason for an escalation. Every reproducible
+escalation in this environment comes from the deterministic, disclosed behavioral
+layer, never from AI judgment.</p>
+
+<div class="donotsay">Implying that "the AI decided to escalate this" in demo mode — it did not; the demo-mode judge cannot produce that verdict at all.</div>
+<div class="donotsay">Implying escalation pauses for a human reviewer to click approve/deny somewhere in this build — that workflow is not implemented; escalate currently means "verdict returned, not executed," full stop.</div>
+</div>
+
+<!-- ============ 9. AI / ANTHROPIC ============ -->
+<div class="section" id="s9">
+<div class="kicker">Part 9</div>
+<h2>9. AI / Anthropic — Where Intelligence Actually Lives</h2>
+
+<h3>Demo Mode — what actually happens</h3>
+<p><code>AEGIS_DEMO_MODE=true</code> swaps the intent judge for
+<code>createDemoIntentJudge()</code> (<code>src/api/demoMode.ts</code>) — a fixed
+function that performs no analysis and always returns <code>verdict: "consistent"</code>,
+with a rationale string that says, verbatim, <i>"This is not a real AI risk
+evaluation and must never be used in production."</i> This isn't a UI label bolted on
+top — it's the literal text returned by the judge function itself, visible in every
+Decision Inspector.</p>
+
+<h3>Non-demo / intended live mode — where Anthropic is used</h3>
+<p>Outside demo mode, <code>createServerIntentJudge()</code> requires a real
+<code>ANTHROPIC_API_KEY</code> and constructs <code>AnthropicIntentJudge</code>
+(<code>src/risk/anthropicJudge.ts</code>) — a real model call comparing the agent's
+delegated goal against the transaction's stated purpose, returning a structured
+consistent/inconsistent/ambiguous verdict with a rationale. This code path exists and
+is tested (<code>anthropic-judge.live.test.ts</code>, excluded from the default
+<code>npm test</code> run because it needs a real key) — it has simply not been
+exercised with a real credential in this environment.</p>
+
+<h3>What the LLM/risk judge evaluates — and what it never touches</h3>
+<div class="card nobreak">
+<p style="margin:0"><b>Probabilistic judgment may assist risk/intent evaluation, but
+deterministic authority and budget enforcement are not left solely to the model.</b>
+The intent judge — real or demo — only ever answers "does this transaction's stated
+purpose look consistent with the agent's delegated goal." It has no path to widen a
+capability, approve an over-budget transaction, or override a policy denial. Mission
+budget math (<code>src/mission/reservation.ts</code>), capability/caveat verification
+(<code>src/capability</code>), and revocation checks (<code>src/capability/authorize.ts</code>)
+are pure, deterministic, synchronous code — no model call, no network dependency, no
+possibility of a hallucinated exception. <code>decideTransaction()</code>'s own
+ordering guarantees this: policy runs first and can only make the outcome stricter for
+risk to act on, never the reverse.</p>
+</div>
+<p>This is safer specifically because a model's judgment is probabilistic and can be
+wrong in either direction (too permissive or too strict) — keeping the actual money
+boundary (amount, category, revocation) in deterministic code means a bad or
+manipulated model output can, at worst, escalate a transaction for review; it cannot
+authorize spend outside the token's own bounds.</p>
+
+<h3>Why demonstrate in deterministic mode — said as a deliberate choice, not an apology</h3>
+<ul>
+<li><b>Reproducibility</b> — the same input always produces the same verdict, so a rehearsed demo behaves identically every time.</li>
+<li><b>No external dependency</b> — no network call, no API-key provisioning, nothing that can fail for reasons outside AEGIS's own code during a live presentation.</li>
+<li><b>No provider latency risk</b> — a demo running on a conference room's wifi shouldn't be at the mercy of a third-party API's response time.</li>
+<li><b>No real money movement</b> — the mock rail is self-built and loopback-only by construction; nothing here could accidentally charge a real card even if misconfigured.</li>
+</ul>
+<div class="say">We're demonstrating in a mode that removes every external dependency on purpose — so what you're seeing is entirely the software pipeline, not the reliability of a third-party API on the day we happen to be presenting.</div>
+</div>
+
+<!-- ============ 10. CONCURRENT BUDGET RACE ============ -->
+<div class="section brk" id="s10">
+<div class="kicker">Part 10 — Hero Technical Section</div>
+<h2>10. Concurrent Budget Race</h2>
+
+<h3>The attack, and why naive systems fail it</h3>
+<p>A spending limit implemented as "read the current spend, check it against the
+budget, then write the new spend" has a gap between the read and the write. If twenty
+requests hit that gap at nearly the same instant, every one of them can read the same
+"budget not yet exceeded" state and all twenty can proceed — a classic
+check-then-write (TOCTOU) race. A budget boundary that only holds under sequential
+testing hasn't actually been proven to hold at all; concurrency is precisely the
+condition most systems never load-test for.</p>
+
+<h3>What AEGIS does instead</h3>
+<p><b>Atomic reservation:</b> <code>src/mission/reservation.ts</code>'s <code>reserve()</code>
+is a single SQL <code>UPDATE</code> that computes
+<code>budget − reserved − settled ≥ requested</code> and increments
+<code>reserved_minor_units</code> in the <i>same</i> write — there is no separate
+read step for another request to race against. The database's own transaction
+isolation, not application-level locking or request ordering, is what decides which
+requests succeed. <b>State protected:</b> the mission's <code>reserved_minor_units</code>
+and <code>budget_minor_units</code> columns in SQLite (<code>src/state/db.ts</code>).</p>
+
+<h3>Why sequential testing would not prove the same property</h3>
+<p>Firing 20 requests one after another, waiting for each response before sending the
+next, never exercises the actual race window at all — every request would see a fully
+up-to-date budget by construction. The Security workspace's attack fires all 20
+genuinely concurrently (no waiting between dispatches) specifically so the atomic
+reservation is under real contention, not simulated contention.</p>
+
+<h3>Verified demo numbers (reproduced in this handbook's own verification pass)</h3>
+<div class="diagram">
+20 concurrent attempts &nbsp;×&nbsp; $380 each &nbsp;against a $2,000 mission budget<br>
+<span class="arrow">↓</span><br>
+<b style="color:var(--allow)">5 allowed</b> &nbsp;·&nbsp; <b style="color:var(--deny)">15 blocked</b> &nbsp;·&nbsp; <b style="color:var(--gold-bright)">$1,900.00 spent</b> &nbsp;·&nbsp; <b>$0.00 overspend</b>
+</div>
+<p class="faint">The exact split (how many of 20 land as allowed) depends only on the
+mission budget and the per-attempt amount shown on the Launch-attack button — it is
+recomputed live by the server every run, not a fixed constant in the UI. The invariant
+that must always hold, regardless of the split: <b>allowed × amount ≤ budget</b>, and
+<b>allowed + blocked = attempts</b>.</p>
+
+<h3>Manual test</h3>
+<ol>
+<li>Authority tab → select an agent with token cap ≥ $2,000.</li>
+<li>Security tab → <code>New attack mission ($2,000)</code>.</li>
+<li>Click <code>Launch attack (20 × $380)</code>.</li>
+<li>Confirm: the green "ZERO OVERSPEND — BUDGET HELD" banner appears; <code>allowed × 380 ≤ 2000</code>; <code>allowed + blocked = 20</code>; the "Server-confirmed" spend line matches the displayed total exactly.</li>
+</ol>
+
+<h3>What to point at / what to say</h3>
+<div class="say">Limits are easy to enforce sequentially. The interesting question is whether they survive contention. Twenty requests can arrive at once — a budget boundary is only meaningful if it survives that, not just the common case where requests politely take turns.</div>
+<p>Point at the per-attempt ✓/✗ grid first (it's visually immediate), then the four
+stat numbers, then the green banner's exact spend figure last — that ordering builds
+from "something happened" to "here's the proof it was exactly correct."</p>
+<p><b>Why a technical judge should care:</b> this is a real, load-tested concurrency
+guarantee backed by an adversarial test in the suite
+(<code>src/mission/__tests__/mission-reservation.test.ts</code>) that fires genuinely
+concurrent calls and asserts on final server state — not a claim resting on the demo
+alone.</p>
+</div>
+
+<!-- ============ 11. REVOCATION ============ -->
+<div class="section" id="s11">
+<div class="kicker">Part 11 — Hero Technical Section</div>
+<h2>11. Revocation</h2>
+
+<div class="diagram">
+ROOT<br><span class="arrow">↓ attenuate</span><br>DELEGATED<br><span class="arrow">↓ attenuate</span><br>ATTENUATED<br><span class="arrow">↓ bind</span><br>MISSION
+</div>
+<p>Revoke the <b>root</b>. Every node beneath it — delegated, attenuated, and any
+mission built on top — loses authority on its very next verification, without any of
+those descendant tokens being individually touched, edited, or enumerated.</p>
+
+<h3>Manual test</h3>
+<ol>
+<li>Demonstrate a valid transaction succeeding (<code>ALLOW</code>) under the current authority.</li>
+<li>Revoke the ancestor (Authority tab → <code>Revoke</code>, confirm the dialog — or the Security workspace's scripted scenario).</li>
+<li>Attempt the exact same transaction again.</li>
+<li>Confirm <code>DENY</code>, reason: <code>"Token (or an ancestor) was revoked at &lt;timestamp&gt;: &lt;reason&gt;"</code>.</li>
+<li>Explain why: the capability layer's verification walks the full ancestry chain on every check — it isn't caching "still valid" from the last time it checked.</li>
+</ol>
+
+<h3>What to say</h3>
+<div class="say">Trust is not a permanent credential. It's a live authority relationship — checked fresh on every single transaction, not granted once and assumed to still hold.</div>
+<div class="say">The transaction didn't change. The authority did.</div>
+<p><b>Edge case, disclosed honestly (only if asked):</b> a transaction already past
+the capability check and mid-execution at a rail when a revocation lands is not
+guaranteed-cancellable in the current implementation — named as production hardening
+work in <code>docs/SYSTEM_ARCHITECTURE.md</code> §6, not claimed as solved.</p>
+</div>
+
+<!-- ============ 12. EVIDENCE / LEDGER ============ -->
+<div class="section" id="s12">
+<div class="kicker">Part 12</div>
+<h2>12. Evidence / Ledger — Deep Explanation</h2>
+
+<h3>What gets recorded</h3>
+<table>
+<thead><tr><th>Field</th><th>What it is</th></tr></thead>
+<tr><td><code>seq</code></td><td>Monotonic sequence number (SQLite <code>AUTOINCREMENT</code>) — the entry's position in the chain.</td></tr>
+<tr><td><code>kind</code></td><td>What happened — <code>agent_registered</code>, <code>mission_policy_verdict</code>, <code>policy_verdict</code>, <code>risk_verdict</code>, <code>decision</code>, <code>execution_result</code>, <code>revocation</code>, and others — every pipeline stage writes its own entry.</td></tr>
+<tr><td><code>data_json</code></td><td>The full payload for that event — not just a pass/fail flag.</td></tr>
+<tr><td><code>created_at</code></td><td>Timestamp.</td></tr>
+<tr><td><code>prev_hash</code></td><td>The content hash of the entry immediately before this one — this is the "chain" in hash chain.</td></tr>
+<tr><td><code>content_hash</code></td><td>A hash of this entry's own content.</td></tr>
+<tr><td><code>signature</code></td><td>Ed25519 signature over the entry, produced by the server's ledger signing key.</td></tr>
+</table>
+
+<h3>How verification works</h3>
+<p><code>verifyChain()</code> walks every entry in sequence and confirms three things
+simultaneously: (1) each entry's <code>content_hash</code> actually matches its stored
+content — catches direct data tampering; (2) each entry's <code>prev_hash</code>
+matches the actual previous entry's <code>content_hash</code> — catches a broken or
+reordered link; (3) each entry's <code>signature</code> verifies against the ledger's
+known public key — catches a forged entry signed with a different key. All three are
+independently tested (<code>src/state/__tests__</code>'s "hash-chained ledger — tamper
+detection" suite covers each category separately).</p>
+
+<h3>Why normal application logging is not equivalent</h3>
+<p>A normal log is a record the application chooses to write, in a form the same
+application (or anyone with database access) can also silently edit afterward with no
+trace. A hash-chained, signed ledger makes any retroactive edit — however small —
+break a verifiable mathematical relationship, not just "look suspicious." The
+difference isn't that the ledger is harder to edit at the storage layer (it is, in
+fact, the exact same SQLite file, editable the same way) — it's that editing it
+without also correctly recomputing every subsequent hash and re-signing with a key you
+don't have is what becomes detectable.</p>
+<p><b>Honest framing, precisely:</b> this is not "append-only, tamper-proof
+infrastructure" — the underlying storage can be modified directly (that's exactly what
+the tamper demo does). What's actually true is narrower and still strong:
+<b>modification becomes detectable</b>, both by AEGIS's own check and by a
+completely independent tool.</p>
+</div>
+
+<!-- ============ 13. TAMPER DETECTION ============ -->
+<div class="section brk" id="s13">
+<div class="kicker">Part 13 — Hero Demo Section, The Climax</div>
+<h2>13. Tamper Detection</h2>
+
+<h3>Exact flow</h3>
+<ol>
+<li>Evidence tab → <code>Refresh</code>, then <code>Verify chain</code>.</li>
+<li>Confirm the green <b>"✓ HASH CHAIN VERIFIED"</b> status.</li>
+<li>Click <code>Tamper latest entry</code> — a demo-mode-only route that corrupts one stored entry directly in the SQLite file, bypassing every part of AEGIS's own write path (no ledger append, no signature, no application code involved in the corruption itself).</li>
+<li>Click <code>Verify chain</code> again.</li>
+<li>Confirm the red <b>"✗ INTEGRITY VIOLATION DETECTED"</b> status, with the exact corrupted entry named (e.g. <code>"Entry #81 (decision) was altered directly in storage… content hash and signature were computed over the ORIGINAL content and were never recomputed."</code>).</li>
+<li>Explain which relationship failed: the entry's stored <code>content_hash</code> no longer matches its (now-altered) content — a content-hash mismatch, the simplest and first of the three checks <code>verifyChain()</code> performs.</li>
+</ol>
+<p>This tool exists specifically to demonstrate detection — it is a scope-limited,
+demo-mode-only route (<code>src/api/__tests__/demo-tamper.test.ts</code> covers it
+directly), not a general-purpose data-editing feature.</p>
+
+<h3>What to say — the climax line</h3>
+<div class="say">A normal audit log asks you to trust the system that wrote it. AEGIS lets us check whether that history still agrees with itself — and when it doesn't, it says so, by name, immediately.</div>
+<p>Deliver this line right as the red status appears — it's the strongest single
+moment in the demo because the room watches the exact same button flip from green to
+red on real, unstaged data.</p>
+</div>
+
+<!-- ============ 14. INDEPENDENT VERIFIER ============ -->
+<div class="section" id="s14">
+<div class="kicker">Part 14</div>
+<h2>14. Independent Verifier</h2>
+
+<h3>Why the dashboard shouldn't verify itself</h3>
+<p>If AEGIS's own server were the only thing that ever confirmed the ledger's
+integrity, a compromise of that server's own verification code could hide a
+compromise of the ledger it's checking — the fox checking its own henhouse.
+<code>verifier/</code> is a genuinely separate tool: it imports <b>nothing</b> from
+<code>src/</code>, and depends on nothing running at all — it operates entirely
+offline against a static export file.</p>
+
+<h3>What's independently verified</h3>
+<ul>
+<li>The full hash chain's integrity (re-derived from scratch, not trusting AEGIS's own <code>verifyChain()</code> result).</li>
+<li>Every signature, against AEGIS's <i>public</i> key only.</li>
+<li>Whether any mission's settled spend, reconstructed independently from the exported ledger entries, ever exceeded that mission's own budget.</li>
+</ul>
+
+<h3>Inputs it needs</h3>
+<p>An exported ledger file (<code>verifier/dist/export/exportLedger.js &lt;db path&gt; &lt;publicKeyHex&gt; &lt;output&gt;</code>) and AEGIS's <b>public</b> key, printed by the server's own startup log. Nothing else — no database access, no running AEGIS process, no trust in AEGIS's own reporting.</p>
+
+<h3>What success/failure means</h3>
+<p>Exit code <code>0</code>: every entry's hash, chain link, and signature check out,
+and no mission's reconstructed spend exceeds its budget. Exit code <code>1</code>: at
+least one of those failed — the tool names which. Both are real, observable in a
+terminal, not narrated claims.</p>
+
+<h3>How to run it / demonstrate it</h3>
+<pre><code>npm run build:verifier
+node verifier/dist/export/exportLedger.js ./aegis.db &lt;publicKeyHex&gt; ledger-export.json
+node verifier/dist/cli.js ledger-export.json</code></pre>
+<p>Run this in a terminal <i>after</i> the tamper demo, against a fresh export taken
+post-tamper, if time permits — showing exit code <code>1</code> from a tool that has
+never touched AEGIS's own code is the strongest possible closer for a technical
+judge, but it is optional and time-boxed; the in-dashboard tamper demo alone already
+lands the point.</p>
+
+<h3>Positioning</h3>
+<p>This is the trust property that makes the whole system's "verifiable" claim
+credible rather than self-reported: AEGIS isn't just checking its own homework — a
+second, independently-authored program reaches the same conclusion.</p>
+</div>
+
+<!-- ============ 15. MANUAL TESTING PLAN ============ -->
+<div class="section brk" id="s15">
+<div class="kicker">Part 15</div>
+<h2>15. Complete Manual Testing Plan</h2>
+<p class="dim">Every test below was exercised against the live application during this
+handbook's own verification pass (Part 25). "Reset" means: create a fresh principal
+(sign-in screen) — the fastest way to a clean slate, since every principal owns an
+isolated set of agents/missions.</p>
+
+<h3>15.1 — Authority test cases</h3>
+<table>
+<thead><tr><th style="width:34pt">ID</th><th>Test</th><th>Steps &amp; input</th><th>Expected result</th><th>Validates</th></tr></thead>
+<tr><td>A1</td><td>Root creation</td><td>Authority → fill Agent ID, goal, max amount 2000, categories <code>flights,hotels,software</code> → Create</td><td>New card in tree, "Agent authority" role</td><td>Root token minting</td></tr>
+<tr><td>A2</td><td>Delegation / attenuation</td><td>Select the root → Attenuate → narrower fields (800, <code>flights</code>) → Create</td><td>Child card, "Delegated (attenuated)" role, nested under parent</td><td>Attenuation mint path</td></tr>
+<tr><td>A3</td><td>Narrower max amount enforced</td><td>Attenuate with max amount <i>larger</i> than the parent's (e.g. parent 800 → child 5000)</td><td><code>#agentError</code>: attenuation rejected before a token is minted</td><td><code>caveats.ts</code>'s amount check</td></tr>
+<tr><td>A4</td><td>Narrower categories enforced</td><td>Attenuate with a category not in the parent's list (e.g. parent <code>flights</code> → child <code>flights,crypto</code>)</td><td>Rejected — added category not allowed</td><td><code>caveats.ts</code>'s category subset check</td></tr>
+<tr><td>A5</td><td>Rail restriction enforced</td><td>Attenuate with a rail unchecked in the parent's set, then checked in the child's</td><td>Rejected — added rail not allowed</td><td><code>caveats.ts</code>'s rail subset check</td></tr>
+<tr><td>A6</td><td>Child cannot exceed parent (composite)</td><td>Any single dimension wider than the parent</td><td>Rejected — attenuation is all-or-nothing narrower</td><td>Structural narrowing guarantee</td></tr>
+<tr><td>A7</td><td>Revoked authority fails</td><td>Revoke an agent → immediately retry a transaction that worked before</td><td><code>DENY</code> — "Token (or an ancestor) was revoked…"</td><td>Live revocation check</td></tr>
+<tr><td>A8</td><td>Ancestor-revoked child fails</td><td>Two-generation chain, revoke the root, attempt a transaction on the grandchild</td><td><code>DENY</code>, same reason, even though the grandchild's own token was never touched</td><td>Ancestry-walk verification</td></tr>
+</table>
+
+<h3>15.2 — Mission test cases</h3>
+<table>
+<thead><tr><th style="width:34pt">ID</th><th>Test</th><th>Steps &amp; input</th><th>Expected result</th><th>Validates</th></tr></thead>
+<tr><td>M1</td><td>Valid mission</td><td>Missions → fill ID, agent, goal, budget ≤ token cap, categories ⊆ token's</td><td>"ACTIVE" mission card, Detail shows full remaining budget</td><td>Mission creation path</td></tr>
+<tr><td>M2</td><td>Category wider than token → rejected</td><td>Mission category not present in the agent's own token categories</td><td><code>#missionError</code> — creation refused</td><td><code>validateMissionAgainstToken</code></td></tr>
+<tr><td>M3</td><td>Currency mismatch → rejected</td><td>Mission currency ≠ token currency</td><td>Creation refused</td><td>Currency exact-match rule</td></tr>
+<tr><td>M4</td><td>Budget lower than token cap — allowed and normal</td><td>Mission budget e.g. 800 against a token cap of 2000</td><td>Created successfully — this is expected, not an error (cumulative vs. per-transaction, different dimensions)</td><td>Correct non-conflation of budget types</td></tr>
+<tr><td>M5</td><td>Expiry later than token's → rejected</td><td>Mission expiry after the token's own expiry</td><td>Creation refused</td><td>Expiry bound check</td></tr>
+<tr><td>M6</td><td>Mission–agent binding required</td><td>Attempt to submit without selecting an agent</td><td>Form validation prevents submission</td><td>Referential integrity</td></tr>
+<tr><td>M7</td><td>Mission selection / detail</td><td>Click a mission card</td><td>Mission Detail shows goal, live remaining budget, boundary, expiry, transaction history</td><td>Read-path correctness</td></tr>
+<tr><td>M8</td><td>Cancellation</td><td><code>POST /missions/:id/cancel</code> (API-level; not a dashboard button)</td><td>Status transitions; a subsequent transaction against it is denied by the mission gate's status check</td><td><code>checkMissionGate</code>'s status branch</td></tr>
+</table>
+
+<h3>15.3 — Transaction test matrix</h3>
+<table>
+<thead><tr><th style="width:110pt">Case</th><th>Input</th><th>Expected verdict</th><th>Pipeline stop</th><th>Ledger behavior</th></tr></thead>
+<tr><td>VALID</td><td>Within budget, matching category/counterparty/rail</td><td><span class="pill pill-allow">ALLOW</span></td><td>None — full pipeline runs</td><td>policy_verdict, risk_verdict, decision, execution_result all appended</td></tr>
+<tr><td>OVER BUDGET</td><td>Amount &gt; mission's remaining budget</td><td><span class="pill pill-deny">DENY</span></td><td>Mission gate</td><td>mission_policy_verdict + decision appended; no risk/execution entries</td></tr>
+<tr><td>WRONG CATEGORY</td><td>Category outside the mission's (or token's) allowlist</td><td><span class="pill pill-deny">DENY</span></td><td>Mission gate (if mission attached) else capability layer</td><td>Same shape as above, or policy_verdict if capability-layer</td></tr>
+<tr><td>WRONG COUNTERPARTY</td><td>Counterparty outside the mission's approved list</td><td><span class="pill pill-deny">DENY</span></td><td>Mission gate</td><td>mission_policy_verdict + decision appended</td></tr>
+<tr><td>WRONG RAIL</td><td>Rail not in the token's allowed set</td><td><span class="pill pill-deny">DENY</span></td><td>Capability layer</td><td>policy_verdict (allowed:false) + decision appended</td></tr>
+<tr><td>EXPIRED / INACTIVE MISSION</td><td>Mission status ≠ "active"</td><td><span class="pill pill-deny">DENY</span></td><td>Mission gate (status check, first)</td><td>mission_policy_verdict + decision appended</td></tr>
+<tr><td>REVOKED AUTHORITY</td><td>Token or ancestor revoked</td><td><span class="pill pill-deny">DENY</span></td><td>Capability layer</td><td>policy_verdict (allowed:false) + decision appended</td></tr>
+<tr><td>SUSPICIOUS AMOUNT</td><td>&gt;3× this agent's own historical mean, 3+ prior transactions</td><td><span class="pill pill-escalate">ESCALATE</span></td><td>Risk stage (after policy passes)</td><td>policy_verdict (allowed:true), risk_verdict, decision — no execution_result</td></tr>
+<tr><td>NO MISSION / standing authority</td><td>Mission field left as "None"</td><td>Whatever the token alone determines</td><td>Capability layer directly (no mission gate at all)</td><td>No mission_policy_verdict entry — confirms the mission gate is genuinely skipped, not silently applied</td></tr>
+<tr><td>EXECUTION FAILURE</td><td>Amount doesn't match mock_x402's fixed catalog price for that counterparty/category</td><td>Decision was <code>allow</code>, execution reports failure</td><td>After decision, at execution</td><td>execution_result appended with success:false</td></tr>
+</table>
+
+<h3>15.4 — Security test cases</h3>
+<table>
+<thead><tr><th style="width:34pt">ID</th><th>Test</th><th>Steps</th><th>Expected result</th><th>Inspect</th></tr></thead>
+<tr><td>S1</td><td>Concurrency attack</td><td>New attack mission ($2,000) → Launch attack</td><td>allowed × 380 ≤ 2000, allowed + blocked = 20</td><td>The four stat numbers, the green banner's spend line</td></tr>
+<tr><td>S2</td><td>Zero overspend confirmation</td><td>Same run</td><td>"ZERO OVERSPEND — BUDGET HELD" banner, server-confirmed spend = displayed spend</td><td>Compare the banner's number against the stat row</td></tr>
+<tr><td>S3</td><td>Revocation before/after</td><td>Run scenario</td><td>Before: <code>ALLOW</code>. After: <code>DENY</code>, "revoked" reason</td><td>Both verdict lines, rendered at large scale</td></tr>
+<tr><td>S4</td><td>Repeated attacks (idempotency under retry)</td><td>Launch the attack scenario twice in a row on the same mission</td><td>Second run's budget starts from the first run's already-reduced remaining balance — no double-count</td><td>Remaining budget figure between runs</td></tr>
+<tr><td>S5</td><td>Insufficient budget for even one attempt</td><td>Create an attack mission, spend it to near-zero first, then attack</td><td>Most/all 20 attempts blocked; still zero overspend</td><td>Allowed count near 0</td></tr>
+</table>
+
+<h3>15.5 — Evidence test cases</h3>
+<table>
+<thead><tr><th style="width:34pt">ID</th><th>Test</th><th>Steps</th><th>Expected result</th></tr></thead>
+<tr><td>E1</td><td>Clean ledger verification</td><td>Refresh → Verify chain</td><td>"✓ HASH CHAIN VERIFIED"</td></tr>
+<tr><td>E2</td><td>New event appears</td><td>Submit any transaction, then Refresh</td><td>New entries at the top with a higher <code>seq</code>, correct <code>prev_hash</code> linking to the prior top entry</td></tr>
+<tr><td>E3</td><td>Tamper latest entry</td><td>Tamper latest entry button</td><td>Header badge → "Ledger tampered"</td></tr>
+<tr><td>E4</td><td>Verification failure after tamper</td><td>Verify chain again</td><td>"✗ INTEGRITY VIOLATION DETECTED", exact entry named</td></tr>
+<tr><td>E5</td><td>Hash/signature fields display correctly</td><td>Inspect any ledger entry row</td><td><code>hash</code>, <code>prev</code>, <code>sig</code> all shown, truncated for readability</td></tr>
+<tr><td>E6</td><td>Verifier pass</td><td>Export a clean ledger → <code>node verifier/dist/cli.js</code></td><td>Exit code 0, all proofs pass</td></tr>
+<tr><td>E7</td><td>Verifier fail</td><td>Export a tampered ledger → same command</td><td>Exit code 1, failure named</td></tr>
+</table>
+
+<h3>15.6 — UX / accessibility testing (lighter pass, still required)</h3>
+<table>
+<thead><tr><th style="width:150pt">Check</th><th>Method</th><th>Pass criteria</th></tr></thead>
+<tr><td>All six nav tabs</td><td>Click each in sequence</td><td>Each renders its own workspace and environment image, no reload</td></tr>
+<tr><td>Info popovers</td><td>Hover, then Tab + Enter on each ⓘ</td><td>Opens on hover and on keyboard activation; closes on outside click or Escape</td></tr>
+<tr><td>Inputs (text/number/select/textarea)</td><td>Click into each field type across Authority, Missions, Transactions</td><td>Focus visible, caret behaves normally, typing registers immediately</td></tr>
+<tr><td>Keyboard navigation</td><td>Tab / Shift+Tab through a workspace</td><td>Focus order is logical, always visible, never trapped</td></tr>
+<tr><td>Buttons</td><td>Click every primary action button once</td><td>All clickable, no dead controls</td></tr>
+<tr><td>Viewport 1920×1080 / 1400×900 / 900×700</td><td>Resize / DevTools device toolbar</td><td>No horizontal overflow at any of the three</td></tr>
+<tr><td>Backgrounds remain visible</td><td>Visual check at each viewport</td><td>Environment photograph clearly visible behind every panel, no full-bleed dark overlay</td></tr>
+<tr><td>Reduced motion</td><td>Emulate <code>prefers-reduced-motion: reduce</code></td><td>App boots and functions with zero console errors; parallax/idle drift stop</td></tr>
+<tr><td>Environment doesn't block pointer events</td><td>Click a button directly over a bright part of the background image</td><td>Click registers on the real control underneath — environment layer is <code>pointer-events: none</code></td></tr>
+</table>
+</div>
+
+<!-- ============ 16. TROUBLESHOOTING ============ -->
+<div class="section" id="s16">
+<div class="kicker">Part 16</div>
+<h2>16. Failure / Troubleshooting Guide</h2>
+
+<table>
+<thead><tr><th style="width:170pt">Symptom</th><th>Explanation &amp; fix</th></tr></thead>
+<tr><td><code>localhost refused to connect</code></td><td>The server isn't running. Start it: <code>AEGIS_DEMO_MODE=true npm start</code> from the repo root. Wait for "Aegis listening on http://localhost:8787" in the terminal before reloading the browser.</td></tr>
+<tr><td>"Missing <code>ANTHROPIC_API_KEY</code>" error on startup</td><td>You're <i>not</i> in demo mode. Either set <code>AEGIS_DEMO_MODE=true</code> (recommended for the demo — no key needed) or provide a real key. Never needed for the standard presentation path.</td></tr>
+<tr><td>Demo server startup command</td><td><code>AEGIS_DEMO_MODE=true npm start</code> — this runs <code>npm run build</code> (compiles TypeScript) then starts the compiled server. First run takes a few seconds longer for the build.</td></tr>
+<tr><td><code>ENOTFOUND</code> / DNS error in a terminal</td><td>This is network/provider connectivity (e.g. a stray external API call, or an unrelated tool trying to reach the internet) — <b>not</b> AEGIS's own logic. AEGIS's demo-mode path makes zero external network calls by design (Part 9). If this appears during a normal demo boot, check your network connection, not the application code.</td></tr>
+<tr><td>Invalid API key vs. DNS failure</td><td>An invalid-key error is an authenticated response from the provider (a 401/403-shaped error, arrives fast). A DNS/<code>ENOTFOUND</code> failure never reaches the provider at all — it fails before any request goes out, usually instantly, with no HTTP status at all. If in doubt: irrelevant to the demo path, since demo mode makes no such calls.</td></tr>
+<tr><td>Database stale or already tampered</td><td>Stop the server, delete the SQLite file at your configured <code>AEGIS_DB_PATH</code> (default <code>./aegis.db</code>, plus any <code>-journal</code>/<code>-wal</code>/<code>-shm</code> siblings), restart. A fresh file is created automatically on next boot.</td></tr>
+<tr><td>Ledger already shows "tampered" from a rehearsal</td><td>Same fix as above — the tamper demo corrupts the on-disk database directly, so the only clean reset is a fresh database file. Do this as your last rehearsal step before the actual presentation, not your first.</td></tr>
+<tr><td>Wrong starting principal/agent/mission state</td><td>Sign in with a brand-new principal ID at the sign-in screen — every principal's agents/missions are isolated, so this alone gets you a clean working set without touching the database.</td></tr>
+<tr><td>Port 8787 already in use</td><td>Another process (likely a previous, forgotten server run) is bound to it. Find and stop it (Windows: <code>netstat -ano | findstr :8787</code> then stop that PID; macOS/Linux: <code>lsof -i :8787</code>), or start with a different <code>PORT=…</code> and use that URL instead.</td></tr>
+<tr><td>A workspace's background image is missing/broken</td><td>Confirm <code>public/assets/{overview,authority,missions,transactions,security,evidence}.png</code> all exist and weren't accidentally moved or renamed — the six-workspace crossfade depends on those exact filenames.</td></tr>
+<tr><td>An unexpected transaction result</td><td>Open the Decision Inspector's full pipeline trace — it names the exact stage that produced the verdict and the exact reason text. Cross-check against Part 7's scenario table for what that stage's reason string means.</td></tr>
+</table>
+</div>
+
+<!-- ============ 17. PRE-DEMO CHECKLIST ============ -->
+<div class="section" id="s17">
+<div class="kicker">Part 17</div>
+<h2>17. Pre-Demo Reset Checklist</h2>
+<p class="dim">Run this 10–15 minutes before presenting.</p>
+<ul class="checklist">
+<li>Laptop charging / plugged in</li>
+<li>Browser zoom at 100%</li>
+<li>Fresh database — delete any existing <code>aegis.db</code> (and journal/wal/shm siblings) before this final start</li>
+<li>Server started fresh: <code>AEGIS_DEMO_MODE=true npm start</code>, confirm "Aegis listening…" in the terminal</li>
+<li>Browser open at <code>http://localhost:8787</code>, signed in with a clean, memorable principal ID</li>
+<li>All six workspace tabs clicked once — confirm each background image loads (no broken-image icon)</li>
+<li>No yellow banner or any leftover dev-mode visual clutter at the top of the page</li>
+<li>One rehearsal ALLOW transaction fired and confirmed green</li>
+<li>Database reset again if the rehearsal left state you don't want visible at the real start</li>
+<li>Security workspace's attack button tested once (confirms the mock merchant/rail is responsive)</li>
+<li>Evidence tab confirmed clean — "✓ HASH CHAIN VERIFIED," not tampered from a rehearsal</li>
+<li>Irrelevant windows closed (VS Code, other browser tabs, chat apps)</li>
+<li>System notifications turned off / Do Not Disturb enabled</li>
+<li>Backup screenshots or a short screen-recording ready on the laptop, offline, in case live networking fails</li>
+<li>GitHub repository open in a tab and confirmed it loads (README renders, images display)</li>
+<li>README's embedded screenshots confirmed loading correctly on GitHub's actual rendering, not just locally</li>
+<li>No secrets visible anywhere on screen — no terminal scrollback showing a real key, no <code>.env</code> file open</li>
+<li>This PDF handbook open locally (for a co-presenter to reference, or for your own quick lookup)</li>
+<li>The exact terminal start command copied somewhere fast to paste (README's Quickstart, or this handbook's Part 16)</li>
+</ul>
+</div>
+
+<!-- ============ 18. WHAT CAN MAKE US WIN ============ -->
+<div class="section brk" id="s18">
+<div class="kicker">Part 18</div>
+<h2>18. What Features Can Make Us Win</h2>
+<p class="dim">Ranked by technical/demo impact, not marketing appeal.</p>
+
+<table>
+<thead><tr><th style="width:26pt">#</th><th style="width:150pt">Feature</th><th>Why unusual / why it matters</th><th>Say this</th><th>Point at</th></tr></thead>
+<tr><td>1</td><td>Capability attenuation / bounded delegation</td><td>Most systems delegate by copying or widening scope ("give the sub-process the same key"). Here, narrowing is enforced by the token's own cryptographic structure — a wider child cannot be minted, not merely discouraged by policy.</td><td>"Authority can only ever narrow going down the chain — that's not a rule we follow, it's a rule the token's own math enforces."</td><td>The Authority Flow diagram's narrowing rings, struck-through categories on a child agent</td></tr>
+<tr><td>2</td><td>Atomic budget enforcement under concurrency</td><td>Most demo-stage systems have never actually been fired at concurrently — this one has, and holds exactly at the boundary.</td><td>"Twenty requests just competed for the same budget. Zero overspend — not approximately zero, exactly zero."</td><td>The per-attempt grid and the green "ZERO OVERSPEND" banner</td></tr>
+<tr><td>3</td><td>Immediate ancestor revocation</td><td>No per-descendant cleanup step exists or is needed — the ancestry check itself is the propagation mechanism.</td><td>"The transaction didn't change. The authority did."</td><td>The before/after ALLOW→DENY pair, same input</td></tr>
+<tr><td>4</td><td>ALLOW / DENY / ESCALATE separation</td><td>A binary allow/deny model has no place for "policy is fine, but this looks unusual" — escalate is a genuinely distinct, deterministic outcome here, not a UI label on top of deny.</td><td>"Escalate isn't a softer deny. It's what happens when every hard boundary is satisfied and a completely separate signal still says: look at this one."</td><td>The Decision Inspector's gold badge with the Intent/Behavioral lines shown separately</td></tr>
+<tr><td>5</td><td>Tamper-detectable evidence</td><td>Corrupting the database directly still gets caught, immediately, with the exact entry named — most application audit logs offer no such guarantee.</td><td>"A log tells you what the system says happened. This lets you check whether that history still agrees with itself."</td><td>The status flip from green to red on Evidence</td></tr>
+<tr><td>6</td><td>Independent verifier</td><td>A second, separately-authored tool that shares zero code with AEGIS reaches the same conclusion — this is a materially stronger trust claim than "AEGIS checked itself."</td><td>"This isn't AEGIS grading its own homework."</td><td>The <code>verifier/</code> CLI run in a terminal, if time allows</td></tr>
+<tr><td>7</td><td>Deterministic demo / production AI separation</td><td>The system is architected so a probabilistic model can only ever make an outcome stricter, never grant authority outside the token's own bounds — a real safety property, not a caveat.</td><td>"Judgment may assist risk evaluation. It never gets to decide the budget."</td><td>The Decision Inspector's <code>Intent:</code> line naming itself as a deterministic stand-in</td></tr>
+</table>
+
+<div class="card nobreak">
+<h4>The top three to explain extremely well</h4>
+<p style="margin:0"><b>1. Attenuation</b> (it's the conceptual foundation everything else
+depends on) · <b>2. Atomic budget enforcement under concurrency</b> (it's the most
+viscerally convincing live demo moment) · <b>3. Tamper detection</b> (it's the
+emotional and technical climax — a status flipping red on real, unstaged data is hard
+to argue with). If time runs short anywhere in the script, protect these three before
+anything else.</p>
+</div>
+</div>
+
+<!-- ============ 19. JUDGE QUESTIONS ============ -->
+<div class="section" id="s19">
+<div class="kicker">Part 19</div>
+<h2>19. Questions Judges May Ask</h2>
+
+<div class="qa-q">"What prevents the agent from just bypassing AEGIS?"</div>
+<p class="qa-short">In this architecture, nothing prevents a rail credential from being called directly by something that isn't AEGIS — AEGIS is the decision layer, not a network firewall. What it does guarantee is that <i>if</i> a rail adapter only ever receives credentials scoped to it and is only ever invoked through AEGIS's own execution path, no valid capability token exists that could authorize the bypassed path either.</p>
+<p class="qa-deep">Precisely: AEGIS never holds the rail's own settlement credentials for the agent's use directly — the agent has no rail credential to use standalone. Full production-grade isolation of "the agent literally cannot reach the rail except through AEGIS" is an infrastructure/network-boundary concern, named in <code>docs/SYSTEM_ARCHITECTURE.md</code> §7 as separation of decision and custody, not fully solved at this MVP stage.</p>
+<p class="qa-avoid">Don't say: "It's impossible." Say: "the agent is never handed a credential that lets it bypass this."</p>
+
+<div class="qa-q">"Why not just use API keys?"</div>
+<p class="qa-short">An API key answers "who is this," not "what, exactly, up to how much, is this specific request allowed to do." A capability token encodes the boundary itself, cryptographically — the check doesn't depend on trusting an application's own bookkeeping of what that key is "supposed to" be limited to.</p>
+<p class="qa-deep">A leaked or over-trusted API key can do anything the backend permits for that key's role. A leaked capability token can do exactly what its own caveats say, and revoking it takes effect immediately on the next verification.</p>
+
+<div class="qa-q">"How is this different from RBAC?"</div>
+<p class="qa-short">RBAC assigns a role, and the role's permissions live in a central table someone can edit. Here, the permission set travels <i>inside</i> the credential itself, is mathematically bounded by its parent at mint time, and needs no central lookup to verify.</p>
+<p class="qa-deep">RBAC roles are typically coarse and shared across many principals; attenuation produces a unique, narrower-every-time token per delegation, verifiable offline from the token alone (plus revocation state).</p>
+
+<div class="qa-q">"Why use capability tokens specifically?"</div>
+<p class="qa-short">Because the property we need — "this credential can only ever narrow as it's delegated further" — is exactly what capability-based security with attenuation is designed to guarantee, and Biscuit gives us that with real cryptographic enforcement rather than a convention.</p>
+
+<div class="qa-q">"What happens if the agent is compromised?"</div>
+<p class="qa-short">Its blast radius is exactly its token's own bounds — the max amount, categories, and rails it was actually delegated, nothing more — and it can be revoked instantly, cutting off it and everything it delegated further.</p>
+<p class="qa-avoid">Don't say: "nothing bad can happen." Say: "the damage is capped by design, and stoppable instantly."</p>
+
+<div class="qa-q">"What prevents budget race conditions?"</div>
+<p class="qa-short">One atomic SQL statement that checks and reserves budget in the same write — see Part 10. Demonstrated live under 20 genuinely concurrent requests.</p>
+
+<div class="qa-q">"What does ESCALATE actually do?"</div>
+<p class="qa-short">Stops execution, exactly like deny, but for a different reason: every hard policy boundary passed, and a separate risk signal (behavioral anomaly, or an inconsistent/ambiguous intent judgment) flagged it anyway. See Part 8.</p>
+<p class="qa-avoid">Don't imply a human-approval workflow exists to click "approve" on an escalated transaction — that's not built; escalate currently means "returned, not executed."</p>
+
+<div class="qa-q">"Where is AI used?"</div>
+<p class="qa-short">In the intent-consistency judge only — comparing an agent's delegated goal against a transaction's stated purpose. In this demo it's a disclosed deterministic stand-in; the real Anthropic-backed version exists in code and requires a credential we're not using for this presentation. See Part 9.</p>
+
+<div class="qa-q">"Why Anthropic?"</div>
+<p class="qa-short">It's the model provider the risk-judge interface is built against in this codebase; the interface itself is pluggable, so swapping providers is an adapter, not an architecture change.</p>
+
+<div class="qa-q">"Why not use the LLM for all policy decisions?"</div>
+<p class="qa-short">Because a model's judgment is probabilistic and can be wrong in either direction. Budget, category, and revocation enforcement are deterministic code specifically so a bad or manipulated model output can, at worst, cause an unnecessary escalation — never an unauthorized spend.</p>
+
+<div class="qa-q">"What happens if Anthropic is down?"</div>
+<p class="qa-short"><code>safeJudge()</code> treats a judge failure/timeout as <code>"unavailable"</code>, which <code>combineRiskSignals()</code> maps straight to <code>escalate</code> — fail-safe, not fail-open. Demo mode is unaffected either way, since it never calls a real model.</p>
+
+<div class="qa-q">"Is real money moving?"</div>
+<p class="qa-short">No. This demonstration runs in <code>AEGIS_DEMO_MODE=true</code>, which registers only a self-built mock payment rail — no real rail is reachable in this mode regardless of configuration.</p>
+
+<div class="qa-q">"Where is Razorpay in this?"</div>
+<p class="qa-short">Razorpay is the buildathon this was built for — there is no Razorpay API integration in the current codebase. The rail layer is adapter-based by design (a Stripe test-mode adapter and a self-built mock adapter both exist today); adding a Razorpay adapter is architecturally the same shape of work as either of those, not a redesign.</p>
+<p class="qa-avoid">Never say "we integrate with Razorpay" — we don't, and shouldn't imply it.</p>
+
+<div class="qa-q">"Is this production-ready?"</div>
+<p class="qa-short">No, and we say so directly — this is a from-scratch technical demonstration. It hasn't been load-tested at real scale, integrated with a real agent framework, or exposed to real users or real money. See <code>docs/SECURITY_MODEL.md</code>'s limitations section for the full, specific list.</p>
+
+<div class="qa-q">"Can authority be widened?"</div>
+<p class="qa-short">Not through attenuation — structurally impossible, enforced before a wider child token is ever minted. The only way to grant more authority is to mint an entirely new, independent root token.</p>
+
+<div class="qa-q">"What happens if a parent is revoked?"</div>
+<p class="qa-short">Every descendant fails its next verification — see Part 11.</p>
+
+<div class="qa-q">"Can the database be tampered with?"</div>
+<p class="qa-short">Yes, directly, at the storage layer — we don't claim otherwise. What we claim, and demonstrate live, is that such tampering becomes detectable, both by AEGIS's own check and by a completely independent verifier.</p>
+
+<div class="qa-q">"Is the ledger a blockchain?"</div>
+<p class="qa-short">No. It's a hash-chained, Ed25519-signed append log with one trusted signer (the running process's own key) — tamper-evident, not distributed consensus. We're explicit about this distinction in our own docs.</p>
+
+<div class="qa-q">"Who verifies the verifier?"</div>
+<p class="qa-short">Its own test suite — 58 tests, run independently of the main suite — including adversarial cases where it must correctly <i>refuse</i> to certify a tampered or incomplete export rather than guessing. Anyone can also read its ~150 lines of core logic themselves; it deliberately imports nothing from AEGIS to keep that read small.</p>
+
+<div class="qa-q">"Can someone steal a capability token?"</div>
+<p class="qa-short">A stolen token can be used up to exactly its own bounds until revoked — same category of risk as a stolen scoped credential in any capability system. Revocation is instant once detected. Full token-storage hardening (e.g. how a real agent framework would store these client-side) is outside this MVP's scope.</p>
+
+<div class="qa-q">"How would you deploy this in production?"</div>
+<p class="qa-short">The application itself needs no architecture change — it's a normal long-running Node/Express process. <code>render.yaml</code> in this repo is a verified-locally Render Blueprint for exactly that; it has not been deployed to a public URL. Production hardening beyond deployment — HSM-backed signing keys, real credentialed rails, load testing — is explicitly named as future work, not claimed as done.</p>
+
+<div class="qa-q">"What's the biggest limitation?"</div>
+<p class="qa-short">Be honest, pick one that's actually true and interesting: tail truncation of the ledger (deleting the most <i>recent</i> entries) is not detectable from a single snapshot — there's nothing after the cut to contradict. Or: no real AI risk evaluation or real payment has been exercised in this environment, by design, for this demo.</p>
+
+<div class="qa-q">"What's actually novel here?"</div>
+<p class="qa-short">Not any single primitive alone (capability tokens, hash chains, and atomic reservations each exist elsewhere) — the composition: authority that provably narrows through delegation, bound again to a mission, checked through a pipeline that keeps deterministic boundaries out of AI's hands, revocable instantly, and independently verifiable afterward, all in one coherent, working system.</p>
+</div>
+
+<!-- ============ 20. WHAT NOT TO SAY ============ -->
+<div class="section" id="s20">
+<div class="kicker">Part 20</div>
+<h2>20. What NOT to Say During the Demo</h2>
+
+<div class="donotsay">"We built an unhackable payment system."</div>
+<p class="dim" style="margin-top:-4pt">Say instead: "We built a system where the budget and authority boundaries are enforced deterministically and provably, under real concurrent load."</p>
+
+<div class="donotsay">"This is blockchain."</div>
+<p class="dim" style="margin-top:-4pt">Say instead: "This is a hash-chained, signed ledger — tamper-evident, with one trusted signer. We're precise about that distinction on purpose."</p>
+
+<div class="donotsay">"The AI guarantees safety."</div>
+<p class="dim" style="margin-top:-4pt">Say instead: "AI may assist risk judgment. The budget and authority boundaries are deterministic code, not a model's opinion."</p>
+
+<div class="donotsay">"We have Razorpay integration."</div>
+<p class="dim" style="margin-top:-4pt">Say instead: "The rail layer is adapter-based — we have a Stripe test-mode adapter and a self-built mock adapter today; a Razorpay adapter is the same shape of work."</p>
+
+<div class="donotsay">"This is production-ready."</div>
+<p class="dim" style="margin-top:-4pt">Say instead: "This is a from-scratch technical demonstration of the core trust architecture — here's specifically what production hardening would still require."</p>
+
+<div class="donotsay">"Nothing can go wrong / it's impossible to bypass."</div>
+<p class="dim" style="margin-top:-4pt">Say instead: name the actual guarantee precisely, and name the actual limitation next to it — see Part 19's answers for the pattern.</p>
+</div>
+
+<!-- ============ 21. PRESENTATION STYLE ============ -->
+<div class="section" id="s21">
+<div class="kicker">Part 21</div>
+<h2>21. Presentation Style &amp; Opening</h2>
+<p>Do not open with "Good morning judges, my name is…" — that's a formality, not a
+hook. Open with the actual tension the whole product resolves, so the room looks up
+in the first sentence instead of the fifth.</p>
+
+<div class="card nobreak">
+<h4>The opening — memorize this, don't read it</h4>
+<p style="margin:0"><i>"What happens when an AI agent doesn't just recommend a
+purchase — but actually has the authority to make it? Authentication tells you who the
+agent is. It doesn't tell you whether this specific $380 charge, right now, is
+something it was actually allowed to do. That gap — between being authenticated and
+being authorized, precisely, for one action — is where AEGIS lives. It exists between
+an agent's intent and its execution.<br><br>
+Three words: <b style="color:var(--gold-bright)">bounded, revocable, verifiable</b>.
+That's the whole system. I'll show you all three, live, against real code, in the
+next seven minutes."</i></p>
+</div>
+<p class="faint">Not theatrical, not cringe — just precise tension stated plainly, then
+resolved by what you're about to show, not by adjectives.</p>
+</div>
+
+<!-- ============ 22. MASTER SCRIPT ============ -->
+<div class="section brk" id="s22">
+<div class="kicker">Part 22 — The Most Important Section</div>
+<h2>22. Final 7–8 Minute Master Demo Script</h2>
+<p class="dim">Target total: 7:00–8:00. Rehearsed and timed against the real
+application — see Part 25 for verification notes. Pre-stage a fresh database and a
+signed-in principal before the room fills (Part 17); the clock below starts once
+you're already looking at the Overview screen.</p>
+
+<h3>00:00 – 00:40 — Opening (no click)</h3>
+<table>
+<thead><tr><th style="width:25%">Say</th><th style="width:25%">Do</th><th style="width:20%">Point at</th><th style="width:30%">Judge should understand</th></tr></thead>
+<tr><td>The opening line, Part 21, verbatim or close to it</td><td>Stand, don't touch the keyboard yet</td><td>Nothing — eye contact with the room</td><td>This is a precise technical problem, not a generic "AI is powerful" pitch</td></tr>
+</table>
+
+<h3>00:40 – 01:20 — Act 1: Overview</h3>
+<table>
+<thead><tr><th style="width:25%">Say</th><th style="width:25%">Do</th><th style="width:20%">Point at</th><th style="width:30%">Judge should understand</th></tr></thead>
+<tr><td>"AEGIS is a trust-control layer for autonomous agents that spend money — bounded, revocable, verifiable."</td><td>Overview tab already open</td><td>The hero statement, the fact grid</td><td>The whole thesis is visible before a single action is taken</td></tr>
+</table>
+
+<h3>01:20 – 02:20 — Act 2: Authority</h3>
+<table>
+<thead><tr><th style="width:25%">Say</th><th style="width:25%">Do</th><th style="width:20%">Point at</th><th style="width:30%">Judge should understand</th></tr></thead>
+<tr><td>"Authority isn't binary — it flows through a chain, and it can only narrow going down, never widen."</td><td>Click Authority</td><td>The <code>Root → Delegated → Attenuated → Mission bound</code> chain label</td><td>The mental model, before any data exists</td></tr>
+<tr><td>"Here's a root agent with a $2,000 cap across flights, hotels, software."</td><td>Create root agent (pre-typed values ready to submit)</td><td>The new card in the tree</td><td>Authority starts as a real, bounded credential</td></tr>
+<tr><td>"Now I delegate a sub-agent — and it can only get narrower."</td><td>Select → Attenuate → Create ($800, flights only)</td><td>"Delegated (attenuated)," the struck-through categories</td><td>Narrowing is enforced by the token, not a convention</td></tr>
+</table>
+
+<h3>02:20 – 03:00 — Act 3: Mission</h3>
+<table>
+<thead><tr><th style="width:25%">Say</th><th style="width:25%">Do</th><th style="width:20%">Point at</th><th style="width:30%">Judge should understand</th></tr></thead>
+<tr><td>"Even valid authority isn't enough — the agent also needs a bounded mission. It doesn't get money, it gets permission to complete one objective."</td><td>Click Missions → create (agent = the sub-agent, budget 800, category flights, counterparty acme-airlines)</td><td>"Budget — the boundary this mission cannot exceed"</td><td>A second, independent, narrower boundary layered on top</td></tr>
+</table>
+
+<h3>03:00 – 04:30 — Act 4: Transactions — ALLOW / DENY / ESCALATE</h3>
+<table>
+<thead><tr><th style="width:25%">Say</th><th style="width:25%">Do</th><th style="width:20%">Point at</th><th style="width:30%">Judge should understand</th></tr></thead>
+<tr><td>"Every execution goes through a real decision pipeline — the agent never directly converts intent into money moving."</td><td>Click Transactions</td><td>The <code>Mission → Capability → Policy → Risk → Decision → Execution</code> chain</td><td>Multiple independent checks, not one if-statement</td></tr>
+<tr><td>"$380, a real flight purchase, within every boundary."</td><td>Fill form, Execute</td><td>Green <code>ALLOW</code>, all-green pipeline, the settlement reference</td><td>A genuinely valid case succeeds end-to-end</td></tr>
+<tr><td>"Now the same agent tries to massively exceed its mission's budget."</td><td>Amount 5000, Execute</td><td>Red <code>DENY</code>, the mission-gate stage highlighted</td><td>A denial stops exactly where policy actually stopped it</td></tr>
+<tr><td>"And here's the one most people don't expect — an escalation. This agent has a small, consistent spending pattern; I'm about to submit something wildly out of line with its own history."</td><td>Switch to the pre-warmed escalate-agent (3 × $50 already submitted before the room filled — see the tip below); submit $600</td><td>Gold <code>ESCALATE</code>, the "12.0x this agent's historical average" reason, the <code>Intent: consistent</code> line next to it</td><td>A deterministic, disclosed behavioral signal — not AI, and stated as such right on screen</td></tr>
+</table>
+<p class="faint"><b>Rehearsal tip, honestly disclosed as prep, not live fabrication:</b>
+submitting the three $50 warm-up transactions for the escalate-agent <i>before</i> the
+room fills (during Part 17's checklist) saves ~30 real seconds of live clicking without
+changing what the room sees — the $600 transaction and its verdict are still fired
+live, on real data, in front of them.</p>
+
+<h3>04:30 – 06:00 — Act 5: Security — concurrent attack + revocation</h3>
+<table>
+<thead><tr><th style="width:25%">Say</th><th style="width:25%">Do</th><th style="width:20%">Point at</th><th style="width:30%">Judge should understand</th></tr></thead>
+<tr><td>"Limits are easy to enforce sequentially. The real question is whether they survive contention."</td><td>Click Security, select an agent with headroom, New attack mission ($2,000)</td><td>The panel heading</td><td>Setting up a genuine adversarial condition, not a staged number</td></tr>
+<tr><td>(pause, click, then:) "Twenty requests just competed for the same budget. Five allowed, fifteen blocked. Overspend: zero."</td><td>Launch attack (20 × $380), wait ~5s for resolution</td><td>The per-attempt grid, then the green "ZERO OVERSPEND" banner</td><td>An atomic database write, not client-side pacing, decided this</td></tr>
+<tr><td>"Now watch trust get revoked, live. This transaction works right now —"</td><td>Run the revocation scenario's first half (or a fresh Execute on the same agent)</td><td>The "before" green verdict</td><td>Authority is currently valid</td></tr>
+<tr><td>"— and after I revoke it, the exact same request —"</td><td>Revoke → repeat the transaction</td><td>The "after" red verdict, "revoked" reason</td><td>"The transaction didn't change. The authority did."</td></tr>
+</table>
+
+<h3>06:00 – 07:20 — Act 6: Evidence — verify, tamper, verify</h3>
+<table>
+<thead><tr><th style="width:25%">Say</th><th style="width:25%">Do</th><th style="width:20%">Point at</th><th style="width:30%">Judge should understand</th></tr></thead>
+<tr><td>"AEGIS doesn't just control what an agent can do — it preserves evidence of what happened. Let's check it."</td><td>Click Evidence, Refresh, Verify chain</td><td>Green "✓ HASH CHAIN VERIFIED"</td><td>A real, checkable integrity state — not a static label</td></tr>
+<tr><td>"Now I'm going to tamper with the database directly — bypassing AEGIS entirely, the way an attacker with raw storage access would."</td><td>Click Tamper latest entry</td><td>(pause a beat)</td><td>This is a genuine attack simulation, not a scripted animation</td></tr>
+<tr><td>"Verify again —" (let the red status land, then, deliberately:) "A log tells you what the system says happened. This lets you check whether that history still agrees with itself."</td><td>Click Verify chain</td><td>Red "✗ INTEGRITY VIOLATION DETECTED," the named entry</td><td>Tampering is detected, not merely logged as suspicious</td></tr>
+</table>
+
+<h3>07:20 – 07:50 — Closing</h3>
+<table>
+<thead><tr><th style="width:25%">Say</th><th style="width:25%">Do</th><th style="width:20%">Point at</th><th style="width:30%">Judge should understand</th></tr></thead>
+<tr><td>"Autonomous agents don't need unlimited trust to be useful. They need exactly enough authority to complete a mission, the ability to lose that authority instantly, and evidence we can verify afterward. That's AEGIS. Bounded. Revocable. Verifiable. We don't ask the agent to behave — we make the boundary enforceable."</td><td>Step back from the keyboard</td><td>The Overview screen's hero statement, if you have time to flip back to it</td><td>The thesis, restated, now backed by everything just shown</td></tr>
+</table>
+</div>
+
+<!-- ============ 23. 2-MINUTE VERSION ============ -->
+<div class="section" id="s23">
+<div class="kicker">Part 23</div>
+<h2>23. 2-Minute Emergency Version</h2>
+<p class="dim">Use when judges cut the slot short. Six moves, no filler.</p>
+<ol>
+<li><b>Problem (15s):</b> "Authentication tells you who an agent is, not what it's allowed to do, right now. AEGIS answers that second question — bounded, revocable, verifiable."</li>
+<li><b>Authority narrowing (25s):</b> Authority tab, attenuate one sub-agent live, point at the struck-through categories. "Authority can only narrow going down — enforced by the token, not a convention."</li>
+<li><b>One transaction (20s):</b> Transactions tab, one ALLOW. "Every execution goes through a real pipeline before anything moves."</li>
+<li><b>Concurrent attack OR revocation — pick whichever is faster to reach from current state (35s):</b> Attack: "Twenty concurrent requests, zero overspend." Revocation: "The transaction didn't change. The authority did."</li>
+<li><b>Tamper detection (20s):</b> Evidence tab, Verify → Tamper → Verify. "A log tells you what happened. This lets you check whether that history still agrees with itself."</li>
+<li><b>Closing (10s):</b> "Bounded. Revocable. Verifiable. That's AEGIS."</li>
+</ol>
+</div>
+
+<!-- ============ 24. 30-SECOND VERSION ============ -->
+<div class="section" id="s24">
+<div class="kicker">Part 24</div>
+<h2>24. 30-Second Elevator Version</h2>
+<div class="card nobreak">
+<p style="margin:0"><i>"AI agents are starting to spend real money. AEGIS gives them a
+cryptographic permission slip instead of a password — one with a spending cap and an
+expiry baked in, that can only get narrower as it's delegated further, revoked
+instantly with the revocation actually sticking, and every decision recorded in a way
+a completely separate tool can verify without trusting AEGIS at all. Bounded.
+Revocable. Verifiable."</i></p>
+</div>
+</div>
+
+<!-- ============ 25. CHEAT SHEET ============ -->
+<div class="section" id="s25">
+<div class="kicker">Part 25 — Presenter Cheat Sheet</div>
+<h2>25. Final One-Page Cheat Sheet</h2>
+<div class="cheat">
+
+<h4>Opening line</h4>
+<p>"What happens when an AI agent doesn't just recommend a purchase — but actually has
+the authority to make it? Authentication tells you who the agent is. It doesn't tell
+you whether this specific charge, right now, is allowed."</p>
+
+<h4>3 core ideas</h4>
+<p>1. Authority narrows, never widens, as it's delegated. &nbsp;2. A boundary only
+matters if it survives concurrency and revokes instantly. &nbsp;3. Evidence must be
+independently checkable, not just logged.</p>
+
+<h4>Top 3 winning features (defend these hardest)</h4>
+<p>1. Attenuation (the foundation) &nbsp;·&nbsp; 2. Atomic budget enforcement under
+concurrency (the viscerally convincing moment) &nbsp;·&nbsp; 3. Tamper detection
+(the climax)</p>
+
+<h4>Demo order</h4>
+<p>Overview → Authority (create + attenuate) → Missions (create) → Transactions
+(ALLOW → DENY → ESCALATE) → Security (attack → revoke) → Evidence (verify → tamper →
+verify) → close</p>
+
+<h4>ALLOW input</h4>
+<p><code>380</code> · <code>flights</code> · <code>mock_x402</code> · <code>acme-airlines</code> · mission attached, within budget</p>
+
+<h4>DENY input</h4>
+<p><code>5000</code> against an $800 mission — or the same transaction after revoking its agent</p>
+
+<h4>ESCALATE input</h4>
+<p>3 prior transactions at <code>$50</code> (pre-warm before the room fills), then one at <code>$600</code> (12× the mean, over the 3× threshold), no mission, category <code>software</code></p>
+
+<h4>Attack expectation</h4>
+<p>20 × $380 vs. $2,000 budget → allowed × 380 ≤ 2000, allowed + blocked = 20, "ZERO OVERSPEND — BUDGET HELD"</p>
+
+<h4>Revocation steps</h4>
+<p>Execute (ALLOW) → Revoke agent → Execute again (DENY, "revoked" reason)</p>
+
+<h4>Tamper steps</h4>
+<p>Verify chain (green) → Tamper latest entry → Verify chain (red, entry named)</p>
+
+<h4>Final line</h4>
+<p>"Bounded. Revocable. Verifiable. We don't ask the agent to behave — we make the boundary enforceable."</p>
+
+<h4>5 most likely judge questions</h4>
+<p>1. "Where is AI actually used?" &nbsp;2. "Is real money moving?" &nbsp;3. "Is the
+ledger a blockchain?" &nbsp;4. "What prevents budget race conditions?" &nbsp;5. "Is
+this production-ready?" — <span class="faint">full answers in Part 19.</span></p>
+
+</div>
+</div>
+
+</body>
+</html>

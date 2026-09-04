@@ -101,8 +101,11 @@ ever runs:
    - **Intent-consistency judge** (`src/risk/types.ts`'s `IntentJudge` interface) —
      pluggable. In demo mode it is `createDemoIntentJudge()`
      (`src/api/demoMode.ts`) — a fixed function that always returns `"consistent"` and
-     says so explicitly in its own rationale text. Outside demo mode it is
-     `AnthropicIntentJudge` (`src/risk/anthropicJudge.ts`), a real Anthropic API call.
+     says so explicitly in its own rationale text. Outside demo mode it is one of two
+     real implementations — `AnthropicIntentJudge` (`src/risk/anthropicJudge.ts`) or
+     `GeminiIntentJudge` (`src/risk/geminiJudge.ts`) — chosen by `AEGIS_RISK_PROVIDER`
+     (or automatically if only one provider's key is set); see `src/api/demoMode.ts`'s
+     `createServerIntentJudge()`.
    - **Behavioral baseline** (`src/risk/baseline.ts`) — two simple, disclosed
      heuristics: a rolling-window transaction-rate check (5+ transactions by the same
      agent within 60s), and an amount-deviation check (a transaction more than 3× an

@@ -112,8 +112,12 @@ Mission gate + atomic budget reservation → cryptographic capability/policy che
 `allow` / `deny` / `escalate` decision → (on `allow`) rail-agnostic execution against
 a payment rail. The risk/intent judgment is a **pluggable** interface — in demo mode
 it's a disclosed deterministic stand-in (see **Demo Mode** below); in a credentialed
-deployment it's a real Anthropic model call. Every one of these stages writes its own
-entry to the ledger, regardless of outcome.
+deployment it's a real model call to either Anthropic or Gemini (two independent
+implementations of the same interface — see **Risk judge provider** below for how one
+is selected). Every one of these stages writes its own entry to the ledger, regardless
+of outcome. Whichever judge is in use, it can only ever make an already
+policy-approved transaction stricter (escalate for review) — it has no path to
+override a deterministic `deny` into an `allow`; see `src/decision/decide.ts`.
 
 ### Tamper-evident ledger
 
@@ -146,6 +150,37 @@ the ledger, the verifier — is the real, unmodified production code path, runni
 zero external accounts or API keys. See [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md)
 §6 for exactly what this does and doesn't prove.
 
+### Risk judge provider (outside Demo Mode)
+
+Two independent, real implementations of the same `IntentJudge` interface exist —
+`AnthropicIntentJudge` and `GeminiIntentJudge` (`src/risk/anthropicJudge.ts`,
+`src/risk/geminiJudge.ts`) — selected instead of each other, never combined. Demo mode
+always wins regardless of what's configured here. Outside demo mode:
+
+- `AEGIS_RISK_PROVIDER=anthropic` or `AEGIS_RISK_PROVIDER=gemini` selects explicitly,
+  and requires the matching key (`ANTHROPIC_API_KEY` / `GEMINI_API_KEY`) to be set.
+- With `AEGIS_RISK_PROVIDER` unset, whichever single key is present is used
+  automatically; if **both** are set, the server refuses to start rather than guess —
+  set `AEGIS_RISK_PROVIDER` explicitly.
+- With neither key set and demo mode off, the server refuses to start (unchanged,
+  fail-closed behavior — see `docs/THREAT_MODEL.md` §11).
+
+Both judges use schema-constrained structured output (never free-text parsing) and
+throw — rather than guessing a default verdict — on any missing, malformed, or
+out-of-range response; `src/decision/decide.ts`'s `safeJudge()` turns that throw (or a
+timeout) into `verdict: "unavailable"`, which always resolves to `escalate`, never a
+silent `allow`. See `src/api/demoMode.ts`'s `createServerIntentJudge` for the exact
+selection logic.
+
+**Judge timeout.** `AEGIS_JUDGE_TIMEOUT_MS` overrides how long `safeJudge()` waits
+before treating the judge as unavailable (→ `escalate`). Left unset, the default is
+provider-aware: 8 seconds for demo mode/Anthropic (unchanged), 45 seconds for Gemini —
+sized for Gemini's real observed latency (20–28s across live test calls), since a
+short timeout tuned for the fast providers would escalate nearly every Gemini-judged
+transaction before Gemini ever got the chance to respond. Must be a positive whole
+number if set at all; see `src/api/demoMode.ts`'s `parseExplicitJudgeTimeoutMs` and
+`defaultJudgeTimeoutMs`.
+
 ---
 
 ## Quickstart
@@ -157,8 +192,8 @@ npm install
 AEGIS_DEMO_MODE=true npm start
 ```
 
-Open **http://localhost:8787**. No `ANTHROPIC_API_KEY` or `STRIPE_SECRET_KEY` is
-required or read in this mode. The server's terminal output prints a demo-mode banner
+Open **http://localhost:8787**. No `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, or
+`STRIPE_SECRET_KEY` is required or read in this mode. The server's terminal output prints a demo-mode banner
 and its ledger's **public** verification key on startup — copy that key if you intend
 to run the independent verifier later.
 
@@ -174,17 +209,23 @@ background and, once signed in, all six read and write the same real API:
 | **Authority** | Create a root agent, then select and **Attenuate** it to mint a narrower sub-agent — the live chain diagram (`Root → Delegated → Attenuated → Mission bound`) updates as you go |
 | **Missions** | Bind a bounded objective (goal + its own, narrower budget) to a selected agent; Mission Detail shows live remaining budget as transactions settle against it |
 | **Transactions** | Submit a transaction against the selected agent (optionally scoped to a mission) and watch the full pipeline resolve to `ALLOW`, `DENY`, or `ESCALATE`, stage by stage |
-| **Security** | Demo-mode-only — the concurrent-budget-race and revocation scenarios below |
-| **Evidence** | The live hash-chained ledger, a one-click integrity check, a one-click tamper (demo-mode only), and the independent verifier's own instructions |
+| **Security** | Always available, in any server mode — the concurrent-budget-race, revocation, and ledger-tamper scenarios below, all running against the isolated Security Demonstration Lab (see below), never production data |
+| **Evidence** | The live, real production ledger — a one-click integrity check and the independent verifier's own instructions. Tampering only ever happens in the isolated Security Lab (Security workspace), never here |
 
 For a scripted, rehearsed walkthrough of all six with exact click targets, see
 [`docs/DEMO.md`](docs/DEMO.md).
 
 ## Running the attack theatre
 
-The Security workspace (visible once signed in with `AEGIS_DEMO_MODE=true`) runs two
-live scenarios against the real API — nothing is scripted or fabricated — and the
-Evidence workspace runs a third:
+The Security workspace runs three live scenarios against the real API — nothing is
+scripted or fabricated — in any server mode, signed in or not to demo mode. All three
+run against the **Security Demonstration Lab** (`src/api/securityLab.ts`): a
+completely separate instance of the exact same, unmodified pipeline — its own
+freshly-generated root/ledger keypairs, its own private, in-memory (`:memory:`)
+database, its own principals/agents/missions/ledger — mounted at `/lab` and rebuilt
+from scratch on every reset. It shares nothing with production except the mock
+merchant used for settlement, so nothing done here can ever touch, corrupt, or even
+be confused with real production evidence:
 
 - **Atomic budget attack** — fires many concurrent transaction attempts against one
   mission's budget, shows the running allow/deny counters, then independently
@@ -197,9 +238,14 @@ Evidence workspace runs a third:
   transaction again (denied by the real capability layer), and visualizes the
   narrowing/revoked chain, with the before/after verdicts rendered at the same
   large, hard-to-miss scale as the ledger integrity check below.
-- **Ledger integrity** — checks the hash chain, then deliberately tampers one ledger
-  entry through a scope-limited, demo-mode-only route and re-checks, showing the
-  chain flip from valid to invalid with the exact corrupted entry named.
+- **Ledger integrity** — checks the lab's own hash chain, then deliberately tampers
+  one entry through a route that only ever touches the lab's isolated database, and
+  re-checks, showing the chain flip from valid to invalid with the exact corrupted
+  entry named. **Resetting the lab** (a single explicit action) discards that instance
+  entirely and builds a genuinely fresh, unverified one — there is no in-place
+  "repair," matching the same real-evidence-is-never-selectively-rewritten stance the
+  production ledger holds. Production's own ledger (Evidence workspace) has no
+  tamper route reachable over HTTP at all, in any mode.
 
 ## Exporting and independently verifying the ledger
 
@@ -226,13 +272,14 @@ read as a running, hosted instance existing right now.
 
 ## Test status
 
-**492 tests passing** — 434 in the main Aegis suite (including dedicated dashboard
-tests covering the Authority Flow view, the pipeline trace, and XSS-safety of every
-value rendered from server responses), 58 in the verifier's own suite — both run
-repeatedly with no flakes observed. Reproduce with:
+**629 tests passing** — 571 in the main Aegis suite (including dedicated dashboard
+tests covering the Authority Flow view, the pipeline trace, XSS-safety of every value
+rendered from server responses, offline coverage for both the Anthropic and Gemini
+risk-judge providers, and the provider-aware judge-timeout configuration), 58 in the
+verifier's own suite — both run repeatedly with no flakes observed. Reproduce with:
 
 ```bash
-npm test              # main suite (434)
+npm test              # main suite (571)
 npm run test:verifier # verifier suite (58)
 ```
 
@@ -249,7 +296,9 @@ npm run test:verifier # verifier suite (58)
   decision → execution → ledger) runs end-to-end with no external accounts.
 
 **Requires external credentials (code paths exist, not exercised in this environment):**
-- A real Anthropic-backed semantic risk judgment (`ANTHROPIC_API_KEY`).
+- A real Anthropic- or Gemini-backed semantic risk judgment (`ANTHROPIC_API_KEY` or
+  `GEMINI_API_KEY`, with `AEGIS_RISK_PROVIDER` choosing between them — see **Risk judge
+  provider** above).
 - A real Stripe test-mode settlement (`STRIPE_SECRET_KEY`).
 
 ## Security model
@@ -267,10 +316,14 @@ npm run test:verifier # verifier suite (58)
 
 ## Honest limitations
 
-- **No live, real AI risk evaluation has been exercised in this environment** — the
-  real Anthropic-backed judge exists in code and is architecturally live-swappable,
-  but no `ANTHROPIC_API_KEY` has been available to run it. Demo mode's deterministic
-  stand-in is clearly disclosed, on-screen, at all times.
+- **No live, real AI risk evaluation has been exercised in this environment** — both
+  the Anthropic-backed and Gemini-backed judges exist in code and are
+  architecturally live-swappable (`AEGIS_RISK_PROVIDER`), but this environment's own
+  test/verification runs have used neither a real `ANTHROPIC_API_KEY` nor a real
+  `GEMINI_API_KEY` — only each judge's offline, schema/parsing-level test coverage
+  (`gemini-judge.test.ts`) plus the pre-existing Anthropic live-test scaffolding
+  (both live-only suites are opt-in and excluded from `npm test` by design). Demo
+  mode's deterministic stand-in is clearly disclosed, on-screen, at all times.
 - **No real payment has moved.** `mock_x402` is a self-built mock rail; Stripe
   integration exists in code (test-mode only) but is not exercised in the
   credential-free demo path.
@@ -292,7 +345,7 @@ src/
   capability/   Biscuit token minting, attenuation, revocation
   mission/      mission policy, atomic reservation, mission-scoped ledger reads
   decision/     composite allow/deny/escalate decision engine
-  risk/         intent judge interface (Anthropic-backed + baseline anomaly checks)
+  risk/         intent judge interface (Anthropic- and Gemini-backed + baseline anomaly checks)
   execution/    rail-agnostic transaction execution
   rails/        Stripe test-mode adapter, self-built mock_x402 adapter + demo merchant
   state/        SQLite persistence, the hash-chained/signed ledger, crypto primitives

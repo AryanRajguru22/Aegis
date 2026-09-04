@@ -28,7 +28,7 @@ app reads and when each one actually matters.
 ## Tests
 
 ```bash
-npm test              # main suite — 434 tests
+npm test              # main suite — 571 tests
 npm run test:verifier # independent verifier's own suite — 58 tests
 ```
 
@@ -37,9 +37,10 @@ Every behavioral change needs a passing test suite before it's proposed — see
 doesn't. Narrower slices (`npm run test:capability`, `test:mission`, `test:api`, etc.
 — see `package.json`) are useful while iterating on one area.
 
-Two test files require real external credentials and are excluded from `npm test`:
-`test:risk:live` (needs `ANTHROPIC_API_KEY`) and `test:rails:live` (needs
-`STRIPE_SECRET_KEY`). Don't add new tests to the default `npm test` run that require
+Three test files require real external credentials and are excluded from `npm test`:
+`test:risk:live` (needs `ANTHROPIC_API_KEY`), `test:risk:live:gemini` (needs
+`GEMINI_API_KEY`), and `test:rails:live` (needs `STRIPE_SECRET_KEY`). Don't add new
+tests to the default `npm test` run that require
 credentials — the standard suite must stay runnable with zero external accounts.
 
 ## Branch / PR expectations

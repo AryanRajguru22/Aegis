@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AEGIS — Final Recording Playbook</title>
+<style>
+  @page { size: A4; margin: 20mm 16mm 18mm 16mm; }
+  :root{
+    --bg:#0c0a08; --panel:#161310; --panel2:#1c1815; --line:#332c24;
+    --text:#f0ece2; --dim:#b7a792; --faint:#8a7c65;
+    --gold:#d9a55c; --gold-bright:#e8bd80; --copper:#b97a4a;
+    --allow:#7fbf8a; --deny:#d9776f; --escalate:#d9a55c;
+    --mono: "Consolas","SF Mono","Cascadia Code",monospace;
+    --serif: Georgia, "Iowan Old Style", Cambria, "Times New Roman", serif;
+    --sans: "Segoe UI", -apple-system, "Helvetica Neue", Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{ background:var(--bg); color:var(--text); font-family:var(--sans); font-size:10.3pt; line-height:1.55; margin:0; }
+  h1,h2,h3,h4{ font-family:var(--serif); font-weight:700; color:var(--gold-bright); letter-spacing:0.2px; }
+  h1{ font-size:22pt; margin:0 0 6pt 0; }
+  h2{ font-size:15pt; margin:0 0 8pt 0; border-bottom:1px solid var(--line); padding-bottom:6pt; page-break-after:avoid; }
+  h3{ font-size:12pt; color:var(--gold); margin:14pt 0 5pt 0; page-break-after:avoid; }
+  h4{ font-size:10.6pt; color:var(--dim); margin:10pt 0 4pt 0; text-transform:uppercase; letter-spacing:0.6px; page-break-after:avoid; }
+  p{ margin:0 0 8pt 0; color:var(--text); }
+  a{ color:var(--gold); }
+  .dim{ color:var(--dim); }
+  .faint{ color:var(--faint); font-size:9pt; }
+  .section{ padding-top:2pt; }
+  .section.brk{ page-break-before:always; }
+  .nobreak{ break-inside:avoid; page-break-inside:avoid; }
+  .kicker{ text-transform:uppercase; letter-spacing:2px; font-size:8.5pt; color:var(--faint); margin-bottom:4pt; }
+  .pill{ display:inline-block; padding:2pt 8pt; border-radius:3pt; font-size:8.5pt; font-weight:700; letter-spacing:0.4px; }
+  .pill-allow{ background:rgba(127,191,138,0.15); color:var(--allow); border:1px solid rgba(127,191,138,0.4); }
+  .pill-deny{ background:rgba(217,119,111,0.15); color:var(--deny); border:1px solid rgba(217,119,111,0.4); }
+  .pill-escalate{ background:rgba(217,165,92,0.15); color:var(--escalate); border:1px solid rgba(217,165,92,0.4); }
+
+  table{ width:100%; border-collapse:collapse; margin:8pt 0 12pt 0; font-size:9.3pt; break-inside:avoid; }
+  th{ background:var(--panel2); color:var(--gold-bright); text-align:left; padding:5pt 7pt; border:1px solid var(--line); font-size:8.7pt; text-transform:uppercase; letter-spacing:0.3px; }
+  td{ padding:5pt 7pt; border:1px solid var(--line); vertical-align:top; color:var(--text); }
+  tr{ break-inside:avoid; }
+  code, .mono{ font-family:var(--mono); font-size:9pt; color:var(--gold-bright); background:rgba(217,165,92,0.08); padding:1pt 4pt; border-radius:2pt; }
+  pre{ font-family:var(--mono); font-size:8.7pt; background:var(--panel); border:1px solid var(--line); border-radius:4pt; padding:8pt 10pt; overflow-x:auto; color:var(--dim); line-height:1.5; break-inside:avoid; }
+  pre code{ background:none; padding:0; color:var(--dim); }
+
+  .card{ background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--gold); border-radius:4pt; padding:9pt 12pt; margin:8pt 0; break-inside:avoid; }
+  .card.deny{ border-left-color:var(--deny); }
+  .card.allow{ border-left-color:var(--allow); }
+  .card.escalate{ border-left-color:var(--escalate); }
+  .card h4{ margin-top:0; color:var(--gold-bright); }
+
+  .diagram{ background:var(--panel); border:1px solid var(--line); border-radius:6pt; padding:14pt 16pt; font-family:var(--mono); font-size:9.3pt; color:var(--gold-bright); text-align:center; line-height:1.9; margin:10pt 0; break-inside:avoid; }
+  .diagram .arrow{ color:var(--faint); font-size:8.5pt; }
+  .diagram .node{ display:inline-block; background:var(--panel2); border:1px solid var(--line); border-radius:4pt; padding:3pt 10pt; margin:2pt 0; }
+
+  .say{ background:rgba(217,165,92,0.07); border:1px solid rgba(217,165,92,0.25); border-radius:4pt; padding:7pt 10pt; margin:5pt 0; font-style:italic; color:var(--text); }
+  .say::before{ content:"SAY — "; font-style:normal; font-weight:700; color:var(--gold); }
+  .donotsay{ background:rgba(217,119,111,0.07); border:1px solid rgba(217,119,111,0.25); border-radius:4pt; padding:7pt 10pt; margin:5pt 0; color:var(--text); }
+  .donotsay::before{ content:"DO NOT SAY — "; font-weight:700; color:var(--deny); }
+
+  .warn{ background:rgba(217,119,111,0.09); border:1.5px solid var(--deny); border-radius:5pt; padding:9pt 12pt; margin:9pt 0; break-inside:avoid; }
+  .warn .warnhead{ color:var(--deny); font-weight:700; text-transform:uppercase; letter-spacing:0.5px; font-size:10pt; margin-bottom:3pt; }
+
+  .step{ background:var(--panel); border:1px solid var(--line); border-radius:5pt; padding:8pt 12pt; margin:6pt 0; break-inside:avoid; }
+  .step .stephead{ color:var(--gold-bright); font-weight:700; font-size:9.8pt; }
+
+  ul,ol{ margin:4pt 0 8pt 0; padding-left:18pt; }
+  li{ margin-bottom:3pt; }
+  .checklist li{ list-style:none; margin-left:-18pt; padding-left:18pt; position:relative; }
+  .checklist li::before{ content:"☐"; position:absolute; left:0; color:var(--gold); }
+
+  .toc-item{ display:flex; justify-content:space-between; border-bottom:1px dotted var(--line); padding:3pt 0; font-size:9.7pt; }
+  .toc-item .n{ color:var(--faint); width:20pt; flex:none; }
+  .toc-item .t{ flex:1; color:var(--text); }
+  .toc-h{ font-family:var(--serif); color:var(--gold); font-weight:700; margin:10pt 0 3pt 0; font-size:10.5pt; }
+
+  .cover{ height:257mm; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; page-break-after:always; }
+  .cover .wordmark{ font-family:var(--serif); font-size:48pt; font-weight:700; color:var(--text); letter-spacing:2px; }
+  .cover .wordmark span{ color:var(--gold); }
+  .cover .subtitle{ font-family:var(--sans); font-size:12.5pt; letter-spacing:5px; color:var(--gold); text-transform:uppercase; margin-top:6pt; }
+  .cover .thesis{ font-family:var(--serif); font-size:15pt; color:var(--gold-bright); margin-top:20pt; font-style:italic; }
+  .cover .handbook-title{ font-size:13pt; color:var(--dim); margin-top:28pt; letter-spacing:0.5px; }
+  .cover .event{ font-size:10.5pt; color:var(--faint); margin-top:6pt; letter-spacing:1px; text-transform:uppercase; }
+  .cover .quote{ max-width:120mm; font-size:10.5pt; color:var(--dim); margin-top:34pt; line-height:1.7; font-style:italic; }
+  .cover .rule{ width:60mm; height:1px; background:linear-gradient(90deg,transparent,var(--gold),transparent); margin:16pt 0; }
+
+  .feat-table td:first-child{ color:var(--gold-bright); font-weight:600; }
+  .cheat{ background:var(--panel); border:1px solid var(--gold); border-radius:6pt; padding:12pt 14pt; }
+  .cheat h4{ color:var(--gold-bright); border-bottom:1px solid var(--line); padding-bottom:3pt; }
+  .checkpage{ background:var(--panel); border:1px solid var(--line); border-radius:6pt; padding:10pt 14pt; margin:8pt 0; break-inside:avoid; }
+  .checkpage h4{ color:var(--gold-bright); margin-top:2pt; }
+
+  .tc{ display:flex; align-items:baseline; gap:8pt; border-bottom:1px dotted var(--line); padding:4pt 0; }
+  .tc .m{ font-family:var(--mono); color:var(--gold-bright); font-weight:700; width:60pt; flex:none; }
+  .tc .d{ color:var(--text); font-size:9.5pt; }
+</style>
+</head>
+<body>
+
+<!-- ============ COVER ============ -->
+<div class="cover">
+  <div class="wordmark">AEGIS<span>.</span></div>
+  <div class="subtitle">Trust Mesh Console</div>
+  <div class="thesis">Bounded. Revocable. Verifiable.</div>
+  <div class="rule"></div>
+  <div class="handbook-title">Final Recording Playbook</div>
+  <div class="event">Razorpay Buildathon — Official Recording Operations Manual</div>
+  <div class="quote">"What happens when an AI can act with financial authority — and why trust cannot depend on trusting the AI itself."</div>
+  <div class="faint" style="margin-top:30pt;">v1.0 &nbsp;·&nbsp; Verified against the live running application before writing</div>
+</div>
+
+<!-- ============ TOC ============ -->
+<div class="section" id="toc">
+<h2>Table of Contents</h2>
+<div id="toc-body">
+<div class="toc-item"><span class="n">1</span><span class="t">The Mission — What We Are Actually Recording</span></div>
+<div class="toc-item"><span class="n">2</span><span class="t">Absolute Start-to-Finish Checklist (Step 0 &amp; Step 1: Server)</span></div>
+<div class="toc-item"><span class="n">2b</span><span class="t">Step 2 — Verify Clean Starting State</span></div>
+<div class="toc-item"><span class="n">3</span><span class="t">🔥 Pre-Staging — Do This Before Recording</span></div>
+<div class="toc-item"><span class="n">4</span><span class="t">Exact Recording Order</span></div>
+<div class="toc-item"><span class="n">5</span><span class="t">The Full 7–8 Minute Script</span></div>
+<div class="toc-item"><span class="n">6</span><span class="t">Feature Coverage Matrix</span></div>
+<div class="toc-item"><span class="n">7</span><span class="t">⭐ What Makes AEGIS Different</span></div>
+<div class="toc-item"><span class="n">8</span><span class="t">The Engineering Story — What Could Break, and How AEGIS Prevents It</span></div>
+<div class="toc-item"><span class="n">9</span><span class="t">Manual Recording Rehearsal Plan</span></div>
+<div class="toc-item"><span class="n">10</span><span class="t">Retake / Failure Recovery</span></div>
+<div class="toc-item"><span class="n">11</span><span class="t">Final Pre-Record Checklist (One Page)</span></div>
+<div class="toc-item"><span class="n">12</span><span class="t">After Recording — Before You Submit</span></div>
+</div>
+</div>
+
+<!-- ============ PART 1 — THE MISSION ============ -->
+<div class="section brk" id="p1">
+<div class="kicker">Part 1</div>
+<h2>1. The Mission — What We Are Actually Recording</h2>
+
+<p><b>What we are recording:</b> a 7–8 minute video submission for the Razorpay Buildathon —
+not a live presentation, not a Q&amp;A, not a tutorial. Nobody watching can ask a question
+or wait for a page to load. Everything on screen has to already be exactly what it needs
+to be the instant the camera reaches it.</p>
+
+<p><b>What we are not doing:</b> clicking through six tabs in order and narrating what
+each button does. That is a UI walkthrough, and a judge who has watched twenty of those
+today will not remember it in an hour.</p>
+
+<h3>What we are doing instead</h3>
+<p>We are telling one story, and every workspace shows up inside that story only when
+the story needs it:</p>
+
+<div class="diagram">
+An AI agent can now act with financial authority.<br>
+<span class="arrow">↓</span><br>
+If authority alone decided everything, trust would have to be blind.<br>
+<span class="arrow">↓</span><br>
+AEGIS makes authority <b>bounded</b>, <b>revocable</b>, and <b>verifiable</b> — instead.<br>
+<span class="arrow">↓</span><br>
+Every claim in that sentence is proven live, on screen, not asserted.
+</div>
+
+<h3>The AEGIS thesis</h3>
+<p style="font-family:var(--serif); font-size:14pt; color:var(--gold-bright); text-align:center; margin:14pt 0;">
+Bounded. Revocable. Verifiable.
+</p>
+
+<h3>What the judges should understand by the end</h3>
+<ul>
+<li>Authority in AEGIS is a cryptographic capability token, not a config flag — and it can only ever narrow as it's delegated, never widen.</li>
+<li>Spending is bound to a specific, budgeted mission — and that budget genuinely survives real concurrent load, not just sequential testing.</li>
+<li>Every transaction resolves to one of three real outcomes — allow, deny, or escalate — through a pipeline that never lets a probabilistic AI judgment override a deterministic boundary.</li>
+<li>Authority can be revoked instantly, and revocation is a live, continuously-checked relationship, not a one-time grant.</li>
+<li>Every decision is recorded in a signed, hash-chained ledger, and a completely separate tool — sharing no code with AEGIS itself — can independently prove whether that history was tampered with.</li>
+</ul>
+<p>If a judge remembers nothing else, they should remember this: <b>AEGIS does not ask
+anyone to trust the AI. It makes the boundary around the AI enforceable and provable.</b></p>
+</div>
+
+<!-- ============ PART 2 — START TO FINISH CHECKLIST ============ -->
+<div class="section brk" id="p2">
+<div class="kicker">Part 2</div>
+<h2>2. Absolute Start-to-Finish Checklist</h2>
+
+<h3>STEP 0 — Before touching the application</h3>
+<div class="checkpage">
+<ul class="checklist">
+<li>Laptop plugged in (a mid-recording low-battery warning is not recoverable mid-take)</li>
+<li>Stable network connection — not strictly required by the application (demo mode makes zero external calls), but required for screen-recording software, browser stability, and avoiding OS-level connectivity popups</li>
+<li>OS notifications disabled / Do Not Disturb enabled</li>
+<li>Browser: all unrelated tabs closed, only the AEGIS tab (and a terminal tab, if using the verifier CLI segment) open</li>
+<li>Screen resolution and browser window sized to 1920×1080 (or your recording software's target canvas), browser zoom confirmed at 100%</li>
+<li>Recording software open, target window/region selected, a 5-second test capture reviewed</li>
+<li>Microphone tested — record 10 seconds, play it back, confirm level and no background hum</li>
+<li>Desktop background and taskbar clean of anything embarrassing or identifying</li>
+<li>No API keys, tokens, or secrets visible anywhere — no open `.env`, no terminal scrollback showing a real key</li>
+<li>No terminal window visible unless it's the one you're deliberately using for the verifier CLI segment, and even then, scrolled clean first</li>
+</ul>
+</div>
+
+<h3>STEP 1 — Start the AEGIS server</h3>
+<p>Verified this session, directly against <code>package.json</code> and a live boot. Run from the repository root (<code>D:\Desktop\Aegis</code>).</p>
+
+<div class="step">
+<div class="stephead">Terminal location</div>
+Repository root — the same directory that contains <code>package.json</code>.
+</div>
+
+<div class="step">
+<div class="stephead">Exact command</div>
+<pre><code>AEGIS_DEMO_MODE=true AEGIS_DB_PATH=./aegis-recording.db PORT=8787 npm start</code></pre>
+<p style="margin:6pt 0 0 0">This is <code>npm run build &amp;&amp; node --experimental-wasm-modules dist/api/main.js</code> under the hood (see <code>package.json</code>'s <code>start</code> script) — it rebuilds first, so the very first run after any change takes a few seconds longer. Using a dedicated <code>AEGIS_DB_PATH</code> here (rather than the default <code>./aegis.db</code>) guarantees a database with no leftover history from any earlier session.</p>
+</div>
+
+<div class="step">
+<div class="stephead">Expected output</div>
+<pre><code>==============================================================================
+  AEGIS — LOCAL DEMO MODE (AEGIS_DEMO_MODE=true)
+  Intent judge : deterministic stand-in — NOT a real AI risk evaluation
+  Rails        : mock_x402 ONLY — Stripe is never registered in this mode
+  No real money can move. This proves the SOFTWARE PIPELINE, not payment.
+==============================================================================
+...
+Mock x402 demo merchant listening at http://127.0.0.1:&lt;port&gt; — fixed price catalog: ...
+AEGIS_DEMO_MODE is enabled — the stripe_test rail is never registered in demo mode, regardless of STRIPE_SECRET_KEY.
+Aegis listening on http://localhost:8787
+Dashboard: http://localhost:8787/</code></pre>
+</div>
+
+<div class="step">
+<div class="stephead">How to verify the server is healthy</div>
+In a second terminal: <code>curl http://localhost:8787/demo-mode</code> → must return <code>{"demoMode":true}</code> with HTTP 200. If this fails, the server did not start correctly — check the first terminal for an error before doing anything else.
+</div>
+
+<div class="step">
+<div class="stephead">Exact URL to open</div>
+<code>http://localhost:8787</code>
+</div>
+
+<h3>STEP 2 — Verify clean starting state</h3>
+<table>
+<thead><tr><th style="width:150pt">Check</th><th>How</th><th>What "clean" looks like</th></tr></thead>
+<tr><td>Server health</td><td><code>curl http://localhost:8787/demo-mode</code></td><td><code>{"demoMode":true}</code>, HTTP 200</td></tr>
+<tr><td>Demo mode active</td><td>Same check</td><td><code>demoMode: true</code> — confirms no real rail, no external AI call possible</td></tr>
+<tr><td>No accidental tampering</td><td>Sign in → Evidence tab → the header status next to your principal name</td><td>Should read <b>"Ledger verified"</b>, never <b>"Ledger tampered"</b>. If it already says tampered, this database was used for a rehearsal that included the tamper step — restart with a fresh <code>AEGIS_DB_PATH</code> before recording.</td></tr>
+<tr><td>Correct initial UI state</td><td>Overview tab</td><td>Fresh principal shows "No agent selected," "No mission selected," "No transaction submitted yet," Ledger <b>"Verified · 0"</b></td></tr>
+</table>
+
+<div class="warn">
+<div class="warnhead">When a database reset IS necessary</div>
+Any time the Evidence tab already shows "Ledger tampered," or the concurrent-race attack mission has already been spent down from a prior rehearsal and you don't want that visible in the opening state.
+</div>
+<div class="warn" style="border-color:var(--allow);">
+<div class="warnhead" style="color:var(--allow)">When a reset is NOT necessary</div>
+Between most segments — creating a new agent, a new mission, or a new principal does not require restarting the server. Signing in with a fresh principal ID alone gives you a clean Authority/Missions/Transactions slate without touching anything else. Only the tamper step is a genuine one-way door (see Part 3D).
+</div>
+</div>
+
+<!-- ============ PART 3 — PRE-STAGING ============ -->
+<div class="section brk" id="p3">
+<div class="kicker">Part 3</div>
+<h2>3. 🔥 Pre-Staging — Do This Before Recording</h2>
+<p>The recording must never depend on figuring something out while the camera is
+running. Everything below is prepared <i>before</i> you press record, in a rehearsal
+pass, so that on the real take only the specific click sequence in Part 5 happens on
+camera.</p>
+
+<h3>A. ESCALATE baseline pre-staging</h3>
+
+<p><b>Why ESCALATE cannot be demonstrated from a completely untouched agent:</b> the
+escalate path is triggered by <code>src/risk/baseline.ts</code>'s amount-deviation
+check, which needs at least 3 prior transactions on that specific agent before it has
+a "historical average" to compare against. A brand-new agent's very first transaction
+has no history to deviate from, so it cannot escalate on that basis — the baseline
+must genuinely exist first.</p>
+
+<div class="step">
+<div class="stephead">Exact setup</div>
+<ol>
+<li>Create a dedicated agent for this scenario only — do not reuse the ALLOW/DENY agent. Suggested ID: <code>escalate-agent</code>. Max amount: <code>5000</code>. Categories: <code>software</code>. Do not attach a mission — use standing authority (leave the transaction form's Mission field as "None").</li>
+<li>Go to Transactions, with this agent selected.</li>
+<li>Submit <b>three</b> baseline transactions, one at a time, waiting for each verdict before submitting the next:
+  <br>&nbsp;&nbsp;• Amount <code>50</code> · Category <code>software</code> · Rail <code>mock_x402</code> · Counterparty <code>cloudco</code> · Purpose "Small recurring software license"
+  <br>&nbsp;&nbsp;• Repeat two more times, same values (the exact purpose text can vary slightly, the amount must stay <code>50</code>)</li>
+<li>Confirm each of the three returns <b>ALLOW</b> before moving to the next.</li>
+</ol>
+</div>
+
+<div class="checkpage">
+<h4>PRE-STAGE CHECKLIST — ESCALATE</h4>
+<ul class="checklist">
+<li>Baseline transaction 1 completed ($50, ALLOW)</li>
+<li>Baseline transaction 2 completed ($50, ALLOW)</li>
+<li>Baseline transaction 3 completed ($50, ALLOW)</li>
+<li>History verified — three green ALLOW entries visible for this agent</li>
+<li>Escalation transaction (the $600 one) <b>NOT</b> submitted yet</li>
+<li>Recording can now begin</li>
+</ul>
+</div>
+
+<div class="step">
+<div class="stephead">The exact final transaction that triggers ESCALATE</div>
+Amount <code>600</code> · Category <code>software</code> · Rail <code>mock_x402</code> · Counterparty <code>cloudco</code> · same agent, no mission. This is 12× the $50 baseline mean, well over the 3× threshold. Verified result this session: verdict <b>ESCALATE</b>, reason text <i>"Behavioral anomaly detected: Amount (60000) is 12.0x this agent's historical average (5000), over the 3x threshold"</i> (amounts shown in minor units — 60000 = $600.00, 5000 = $50.00), with the <code>Intent:</code> line still reading <i>consistent</i>.
+</div>
+
+<div class="warn">
+<div class="warnhead">What the viewer should and should not see</div>
+The recording should show only the <b>final $600 transaction</b> causing the escalation. The three $50 baseline transactions are preparation, not content — they happen before you press record, exactly like a magician's setup happens before the curtain rises. Do not narrate or show the baseline-building on camera; it adds nothing and burns 30+ seconds of dead time.
+</div>
+
+<h3>B. Concurrent budget attack pre-staging</h3>
+
+<div class="step">
+<div class="stephead">Preparation</div>
+<ol>
+<li>Select any agent with a token cap of at least $2,000 (the pre-existing root agent from the Authority segment works).</li>
+<li>Go to Security → Concurrent Budget Race.</li>
+<li>Click <b>New attack mission ($2,000)</b> — this is a fixed amount built into the scenario; it always creates a fresh, untouched $2,000 mission.</li>
+<li>Click <b>Launch attack (20 × $380)</b> — fires 20 genuinely concurrent <code>POST /transactions</code> calls at $380 each against that one mission.</li>
+</ol>
+</div>
+
+<table>
+<thead><tr><th style="width:170pt">What is guaranteed</th><th>What may vary</th></tr></thead>
+<tr><td>The mission budget is <b>never</b> exceeded — <code>allowed × 380 ≤ 2000</code>, always. The banner always reads <b>"✓ ZERO OVERSPEND — BUDGET HELD"</b>, with a server-confirmed spend figure underneath.</td><td>The exact split of how many of the 20 attempts land as allowed vs. blocked. This session's own verified run produced 5 allowed / 15 blocked / $1,900 spent — but this depends on real request-scheduling timing, not a script, and can differ between runs.</td></tr>
+</table>
+
+<div class="warn">
+<div class="warnhead">Do not memorize the number of allowed requests</div>
+Say whatever number actually appears on your take. The only fixed claim to make out loud is the invariant: <i>"the mission budget is never exceeded, no matter how the twenty requests race."</i> A natural way to phrase it live: <i>"Twenty requests just competed for the same budget — [X] allowed, [Y] blocked, and the total spent never crossed the line."</i>
+</div>
+
+<h3>C. Revocation pre-staging</h3>
+
+<div class="step">
+<div class="stephead">What must exist before recording</div>
+Nothing needs to be manually pre-staged. The Security workspace's Delegation &amp; Revocation panel builds its own fresh parent/child agent pair and runs the entire before/after sequence internally, every time you click <b>Run scenario</b>. This is by design — it's idempotent, safe to run once per take with no setup.
+</div>
+<div class="step">
+<div class="stephead">Exact action and expected result</div>
+Security tab → click <b>Run scenario</b>. It renders, in order: a "Before revocation" line showing <b>ALLOW</b> (<i>"Policy satisfied; consistent with delegated goal; no behavioral anomalies"</i>), then an "After revocation" box showing a large red <b>✗ DENY</b> with <i>"Token (or an ancestor) was revoked at &lt;timestamp&gt;: Attack-theatre demo revocation"</i> and <i>"Rail calls after revocation: 0."</i>
+</div>
+<div class="warn">
+<div class="warnhead">Use this scenario — not the Authority tab's manual Revoke</div>
+Clicking Revoke directly on an agent card in the Authority tab works correctly on the backend, but that card gives <b>no visible confirmation</b> on screen afterward (still shows Select/Attenuate/Revoke, unchanged). It would be a confusing, undramatic beat on camera. The Security workspace's scenario is purpose-built for this exact demonstration and is the only revocation path that should appear in the video.
+</div>
+
+<h3>D. Evidence / tamper detection pre-staging</h3>
+
+<div class="step">
+<div class="stephead">Exact sequence</div>
+<ol>
+<li>Evidence tab → click <b>Refresh</b>, then <b>Verify chain</b> → confirm green <b>"✓ HASH CHAIN VERIFIED."</b></li>
+<li>Click <b>Tamper latest entry</b> — this corrupts one stored ledger entry directly in the database, bypassing AEGIS's own write path entirely.</li>
+<li>Click <b>Verify chain</b> again → confirm red <b>"✗ INTEGRITY VIOLATION DETECTED,"</b> with the exact corrupted entry named underneath (verified this session: <i>"Entry #103 (agent_registered) was altered directly in storage, bypassing Aegis entirely…"</i> — the exact entry number will differ depending on how much ledger history exists by the time you reach this step).</li>
+</ol>
+</div>
+
+<div class="warn">
+<div class="warnhead">⚠️ RECORD THIS SEGMENT LAST</div>
+Tampering the ledger is a genuine one-way state change for the running server process — there is no "un-tamper" button. Every segment recorded after this one will show a header badge reading "Ledger tampered," which is fine if this really is your last app segment, but wrong if you still need to show ALLOW/DENY/ESCALATE or the concurrent race afterward.
+</div>
+<div class="step">
+<div class="stephead">If a retake of this segment is needed</div>
+Stop the server, delete <code>aegis-recording.db</code> (and any <code>-journal</code>/<code>-wal</code>/<code>-shm</code> siblings), restart with the exact Step 1 command, re-verify <code>/demo-mode</code>, and re-stage whichever earlier segments this retake needs to lead into (e.g. re-create the root/child agents if the video's Authority segment needs to be re-shot too). If only the tamper beat itself needs a retake and everything before it in the final edit is already good footage, you only need a fresh database — the earlier segments' footage doesn't need to be re-recorded.
+</div>
+</div>
+
+<!-- ============ PART 4 — RECORDING ORDER ============ -->
+<div class="section brk" id="p4">
+<div class="kicker">Part 4</div>
+<h2>4. Exact Recording Order</h2>
+<table>
+<thead><tr><th style="width:20pt">#</th><th style="width:110pt">Segment</th><th style="width:55pt">Time</th><th>What to Show</th><th>State Required</th></tr></thead>
+<tr><td>1</td><td>Hook</td><td>00:00–00:35</td><td>Voice-over, no UI</td><td>None</td></tr>
+<tr><td>2</td><td>AEGIS reveal</td><td>00:35–01:05</td><td>Overview hero statement</td><td>Signed in, clean principal</td></tr>
+<tr><td>3</td><td>Authority + attenuation</td><td>01:05–01:55</td><td>Live attenuate + rejected widen attempt</td><td>Root agent pre-staged ($2,000)</td></tr>
+<tr><td>4</td><td>Mission boundaries</td><td>01:55–02:35</td><td>Mission create + Detail budget math</td><td>Child agent from step 3</td></tr>
+<tr><td>5</td><td>Transaction pipeline: ALLOW</td><td rowspan="3">02:35–03:45</td><td>$380 flights, green pipeline</td><td>ALLOW-agent + $800 mission, untouched</td></tr>
+<tr><td>6</td><td>DENY</td><td>$5,000 over an $800 mission</td><td>Same agent/mission as above</td></tr>
+<tr><td>7</td><td>ESCALATE</td><td>$600 vs. $50×3 baseline</td><td>Escalate-agent, baseline already staged (Part 3A)</td></tr>
+<tr><td>8</td><td>Concurrent attack</td><td>03:45–04:40</td><td>20×$380 vs $2,000, zero overspend</td><td>Fresh attack mission clicked immediately before (Part 3B)</td></tr>
+<tr><td>9</td><td>Revocation</td><td>04:40–05:20</td><td>Before/after, one click</td><td>None — self-contained scenario</td></tr>
+<tr><td>10</td><td>Evidence verification</td><td rowspan="2">05:20–06:25</td><td>Verify chain — green</td><td>Ledger currently clean</td></tr>
+<tr><td>11</td><td>Tamper detection</td><td>Tamper → verify → red violation</td><td><b>Record last of all app segments</b></td></tr>
+<tr><td>12</td><td>Architecture / credibility</td><td>06:25–07:00</td><td>Test-count montage, demo-mode honesty line</td><td>Pre-captured <code>npm test</code> output</td></tr>
+<tr><td>13</td><td>Closing statement</td><td>07:00–07:40</td><td>Back to Overview hero shot</td><td>None</td></tr>
+</table>
+</div>
+
+<!-- ============ PART 5 — THE FULL SCRIPT ============ -->
+<div class="section brk" id="p5">
+<div class="kicker">Part 5 — The Most Important Section</div>
+<h2>5. The Full 7–8 Minute Script</h2>
+<p class="dim">Target 7:35, inside the 7:00–8:00 requirement. Every quoted UI string below is a real string this application produces — verified live this session, not paraphrased.</p>
+
+<h3>⏱ 00:00–00:35 — The Hook</h3>
+<div class="card nobreak">
+<h4>What I say</h4>
+<p>"Give an AI agent the ability to spend money, and it can book your flights, pay your vendors, renew your subscriptions — faster than anyone on your team ever could.<br><br>
+Give it the ability to delegate that spending to another agent it spins up on its own, and the picture changes.<br><br>
+Because now the question isn't whether an AI can spend money. It already can.<br><br>
+It's: what, exactly, is it allowed to do — who gave it that authority — and if something goes wrong, can you cut it off, instantly, and prove afterward exactly what happened?"</p>
+<h4>What I do</h4><p>Nothing — voice-over only, do not touch the keyboard.</p>
+<h4>What is on screen</h4><p>Black, or the AEGIS wordmark held on a dark ground. No dashboard yet.</p>
+<h4>What I point at</h4><p>Nothing — the tension is entirely spoken.</p>
+<h4>Why this matters</h4><p>Opens on the actual danger, not a self-introduction — the judge leans in before seeing a single click.</p>
+</div>
+
+<h3>⏱ 00:35–01:05 — The Reveal</h3>
+<div class="card nobreak">
+<h4>What I say</h4>
+<p>"That's the problem AEGIS was built to solve.<br><br>AEGIS doesn't ask you to trust an autonomous agent. It gives that agent authority — with boundaries.<br><br>Bounded. Revocable. Verifiable."</p>
+<h4>What I do</h4><p>Cut to the live Overview workspace, already signed in — no loading visible.</p>
+<h4>What is on screen</h4><p>The hero statement, timed to land as you say the words.</p>
+<h4>What I point at</h4><p>The environment photograph behind the UI — let it register a beat. First proof this is a real product, not a slide.</p>
+<h4>Why this matters</h4><p>Names the thesis once, cleanly, before any UI complexity begins.</p>
+</div>
+
+<h3>⏱ 01:05–01:55 — Authority, Delegation, Attenuation</h3>
+<div class="card nobreak">
+<h4>What I say</h4>
+<p>"Authority in AEGIS isn't a permission flag in a database. It's a signed cryptographic token — a maximum amount, allowed categories, allowed payment rails, all baked into the credential itself.<br><br>
+Here's where most permission systems fail: they can grant access, but they can't safely delegate it. AEGIS can.<br><br>
+Watch what happens when I delegate this agent's authority to a narrower sub-agent. The child can only ever get narrower than its parent — never wider. If I try to hand it more than the parent has —" [attempt to widen] "— it's refused. Not by a UI validation rule. By the token's own math."</p>
+<h4>What I do</h4><p>Root agent's <b>Attenuate</b> → fill <code>child-agent</code> / <code>$800</code> / <code>flights</code> → <b>Create</b>. Then <b>Attenuate</b> again on the child → <code>$5000</code> + category <code>crypto</code> → <b>Create</b>.</p>
+<h4>What is on screen</h4><p>Parent card <code>cap 2000.00 USD · flights,hotels,software</code>; child card <code>cap 800.00 USD · flights</code>; then the real inline error: <i>"Attenuation error: child maxAmountMinorUnits (500000) exceeds parent's (80000)."</i></p>
+<h4>What I point at</h4><p>The two <code>.caveats</code> lines side by side, then the red error text.</p>
+<h4>Why this matters</h4><p>The single strongest technical-credibility moment in the video — a real constraint engine refusing a real attempt, not a form validator.</p>
+</div>
+
+<h3>⏱ 01:55–02:35 — The Mission</h3>
+<div class="card nobreak">
+<h4>What I say</h4>
+<p>"Authority answers what this agent could ever do. A mission answers what it's allowed to do right now.<br><br>
+I'm binding this agent to one bounded objective — an $800 budget, flights only, one approved vendor. The agent doesn't get money. It gets permission to complete this one mission, inside boundaries no wider than its own authority allows."</p>
+<h4>What I do</h4><p>Missions tab → create: budget <code>800</code>, category <code>flights</code>, counterparty <code>acme-airlines</code> → open Mission Detail.</p>
+<h4>What is on screen</h4><p><i>"Budget — the boundary this mission cannot exceed"</i> and the live arithmetic <code>800.00 USD budget − 0.00 USD settled = 800.00 USD remaining.</i></p>
+<h4>What I point at</h4><p>That live subtraction — it updates from real state, not a static label.</p>
+<h4>Why this matters</h4><p>Establishes the authority-vs-mission distinction that the next segment's DENY depends on.</p>
+</div>
+
+<h3>⏱ 02:35–03:45 — The Pipeline: ALLOW, DENY, ESCALATE</h3>
+<div class="card allow nobreak">
+<h4>What I say</h4>
+<p>"Every transaction runs through a real decision pipeline before anything moves — mission budget, capability check, risk evaluation. Let's put three real transactions through it.<br><br>
+First — a valid one. $380, a flight, within every boundary." [Execute] "Allow. Every stage green, real settlement."</p>
+<h4>What I do</h4><p>Amount <code>380</code> / <code>flights</code> / <code>mock_x402</code> / <code>acme-airlines</code>, mission attached → <b>Execute</b>.</p>
+<h4>What is on screen</h4><p>Green <code>ALLOW</code> badge, every pipeline stage lit green, a real settlement reference.</p>
+<h4>What I point at</h4><p>The stage-by-stage trace — nothing skipped.</p>
+<h4>Why this matters</h4><p>Establishes the baseline "everything working" case before showing the two that stop.</p>
+</div>
+<div class="card deny nobreak">
+<h4>What I say</h4>
+<p>"Now — the same agent, wildly over its mission's budget." [Execute $5,000] "Deny. Not a warning. Nothing executes. And notice exactly where it stopped — the mission gate, before the pipeline even reaches the capability check."</p>
+<h4>What I do</h4><p>Change amount to <code>5000</code>, same mission → <b>Execute</b>.</p>
+<h4>What is on screen</h4><p>Red <code>DENY</code>, mission-gate stage highlighted, reason: <i>"Transaction would exceed this mission's budget…"</i></p>
+<h4>What I point at</h4><p>Exactly which stage stopped it — nothing after it rendered as having run.</p>
+<h4>Why this matters</h4><p>Proves a denial is a hard stop with a named cause, not a generic rejection.</p>
+</div>
+<div class="card escalate nobreak">
+<h4>What I say</h4>
+<p>"And here's the one people don't expect. This agent has a small, consistent spending pattern. I'm about to submit something twelve times its normal size." [Execute $600] "Escalate. Not denied — because no hard rule was broken. Flagged, because the behavior doesn't look like this agent anymore."</p>
+<h4>What I do</h4><p>Switch to the pre-staged escalate-agent (Part 3A) → Amount <code>600</code> → <b>Execute</b>.</p>
+<h4>What is on screen</h4><p>Gold <code>ESCALATE</code> badge, reason: <i>"Behavioral anomaly detected: Amount (60000) is 12.0x this agent's historical average (5000), over the 3x threshold"</i>, with <code>Intent: consistent</code> shown right beside it.</p>
+<h4>What I point at</h4><p>The <code>Intent: consistent</code> line specifically — <i>"the AI judge here isn't even the reason this got flagged — a separate, purely mathematical signal is."</i></p>
+<h4>Why this matters</h4><p>The single most technically credible line in the video — the safety boundary was never handed to a probabilistic model.</p>
+</div>
+
+<h3>⏱ 03:45–04:40 — The Engineering Challenge: Concurrent Budget Race</h3>
+<div class="card nobreak">
+<h4>What I say</h4>
+<p>"Here's a real problem we had to solve building this. A mission has a budget. Fine — check the amount against it before letting a transaction through.<br><br>
+But autonomous agents don't send one request at a time. What happens when twenty requests hit the same $2,000 budget, at the same instant, each asking for $380? That's $7,600 of exposure against a $2,000 limit.<br><br>
+If each request checks the balance, sees it's fine, and only then writes its spend — they can all check at once, all see room, and all proceed. That's a real race condition, and it's exactly the kind of bug that never shows up until you're actually under load.<br><br>
+AEGIS closes that gap with one atomic database write that checks and reserves budget in the same instant — so it's not a matter of ordering, it's a matter of arithmetic. Watch what happens when I fire all twenty at once." [Launch attack] "[X] allowed. [Y] blocked. [Z] spent. Zero overspend. The budget held — under real concurrency, not a best case."</p>
+<h4>What I do</h4><p><b>New attack mission ($2,000)</b> → <b>Launch attack (20 × $380)</b> → let it resolve on camera (~4–5s).</p>
+<h4>What is on screen</h4><p>Live per-attempt grid resolving, then the stat row and the green <b>"✓ ZERO OVERSPEND — BUDGET HELD"</b> banner.</p>
+<h4>What I point at</h4><p>The server-confirmed spend line under the banner — the receipts, not just a UI claim.</p>
+<h4>Why this matters</h4><p>Most hackathon demos never touch concurrency at all. This is the moment that separates a working system from a UI mockup — <b>state the numbers you actually see on screen, not memorized ones (see Part 3B).</b></p>
+</div>
+
+<h3>⏱ 04:40–05:20 — The Emergency Brake: Revocation</h3>
+<div class="card nobreak">
+<h4>What I say</h4>
+<p>"Authority isn't a permanent credential. It's a live relationship, checked fresh on every single transaction. Watch.<br><br>
+This transaction works, right now." [before] "Allow.<br><br>
+Now I revoke it." [Run scenario] "And the exact same request —" [after] "Deny.<br><br>
+The transaction didn't change. The authority did."</p>
+<h4>What I do</h4><p>Security tab → click <b>Run scenario</b> — one click runs the entire before/after sequence.</p>
+<h4>What is on screen</h4><p>Green <code>ALLOW … Policy satisfied…</code>, then a large red <code>✗ DENY</code> box: <i>"Token (or an ancestor) was revoked at …: Attack-theatre demo revocation"</i> and <i>"Rail calls after revocation: 0."</i></p>
+<h4>What I point at</h4><p><i>"Rail calls after revocation: 0"</i> — the denial isn't cosmetic, nothing downstream ever got called.</p>
+<h4>Why this matters</h4><p>Short, clean, conceptually powerful — a good pacing anchor right after the denser concurrency segment.</p>
+</div>
+
+<h3>⏱ 05:20–06:25 — The Proof: Evidence, Tamper Detection, Independent Verification</h3>
+<div class="card nobreak">
+<h4>What I say</h4>
+<p>"But enforcement only matters if you can prove it happened. A dashboard telling you a decision was made is not evidence — it's a claim.<br><br>
+Every decision AEGIS makes is written to a signed, hash-chained ledger — each entry linked to the one before it. Let's verify it." [Verify chain] "Hash chain verified.<br><br>
+Now watch — I'm going to tamper with a stored entry directly in the database. Bypassing AEGIS entirely, the way someone with raw storage access would." [Tamper → Verify again] "Integrity violation detected. Not a guess — it names the exact entry, because its stored hash no longer matches its content.<br><br>
+And this doesn't require trusting AEGIS's own check. A completely separate tool — that shares zero code with this dashboard — reaches the same conclusion, offline."</p>
+<h4>What I do</h4><p>Refresh → Verify chain → Tamper latest entry → Verify chain again. (Optional: pre-typed terminal command for the verifier CLI.)</p>
+<h4>What is on screen</h4><p>Green <code>✓ HASH CHAIN VERIFIED</code> → red <code>✗ INTEGRITY VIOLATION DETECTED</code>, named entry, header badge flips to <b>"Ledger tampered."</b></p>
+<h4>What I point at</h4><p>The status flip itself — same button, same screen, green to red, live.</p>
+<h4>Why this matters</h4><p>The emotional peak of the video. <b>Record last of all app segments — see Part 3D.</b></p>
+</div>
+
+<h3>⏱ 06:25–07:00 — Why This Is Real</h3>
+<div class="card nobreak">
+<h4>What I say</h4>
+<p>"None of this is scripted for the camera. It's 434 automated tests on the core pipeline, plus 58 more on that independent verifier — all passing, all reproducible.<br><br>
+Right now, this is running in local demo mode — a disclosed, deterministic risk judge, no external API, no real money, so this recording never depends on network access or a paid credential. The same interface has a real Anthropic-backed judge behind it for a live deployment — but we'd rather show you something honest and reproducible than fake a model call for a demo."</p>
+<h4>What I do</h4><p>Pre-captured footage/screenshots only — do not run tests live on camera.</p>
+<h4>What is on screen</h4><p>The Decision Inspector's own disclosure text, then a terminal flash of both suites' final summary lines.</p>
+<h4>What I point at</h4><p>The word "deterministic" and the exact pass counts.</p>
+<h4>Why this matters</h4><p>Precision reads as credibility — and this is the honest, complete answer to "is AI really deciding this."</p>
+</div>
+
+<h3>⏱ 07:00–07:40 — The Close</h3>
+<div class="card nobreak">
+<h4>What I say</h4>
+<p>"The future problem was never whether an AI agent can spend money. It already can.<br><br>
+The real question is what it's allowed to do — and whether you can prove it stayed inside those lines.<br><br>
+The answer can't be: trust it.<br><br>
+It has to be authority that's bounded, that's revocable, and that's verifiable.<br><br>
+That's AEGIS."</p>
+<h4>What I do</h4><p>Cut back to Overview, hold the final frame 2 seconds before cutting to black.</p>
+<h4>What is on screen</h4><p>The hero statement, mirroring the opening reveal shot exactly.</p>
+<h4>What I point at</h4><p>Nothing — let the words land.</p>
+<h4>Why this matters</h4><p>Directly answers the question the hook opened with — no "thank you," no generic sign-off.</p>
+</div>
+
+<p class="faint" style="text-align:center; margin-top:10pt;">Total spoken runtime at this pacing: ≈ 7:35 — inside the 7:00–8:00 target.</p>
+</div>
+
+<!-- ============ PART 6 — FEATURE COVERAGE MATRIX ============ -->
+<div class="section brk" id="p6">
+<div class="kicker">Part 6</div>
+<h2>6. Feature Coverage Matrix</h2>
+<table>
+<thead><tr><th style="width:130pt">Feature</th><th style="width:60pt">Mentioned verbally</th><th style="width:55pt">Shown visually</th><th style="width:60pt">Demonstrated</th><th>Proof shown</th></tr></thead>
+<tr><td>Authority / capability token</td><td>✅</td><td>✅</td><td>✅</td><td>Caveats line, live creation</td></tr>
+<tr><td>Attenuation (delegation narrowing)</td><td>✅</td><td>✅</td><td>✅</td><td>Live rejected-widening error</td></tr>
+<tr><td>Missions / budget boundary</td><td>✅</td><td>✅</td><td>✅</td><td>Live create + Detail arithmetic</td></tr>
+<tr><td>Transaction decision pipeline</td><td>✅</td><td>✅</td><td>✅</td><td>Stage-by-stage trace, 3 live verdicts</td></tr>
+<tr><td>ALLOW</td><td>✅</td><td>✅</td><td>✅</td><td>Live, real settlement reference</td></tr>
+<tr><td>DENY</td><td>✅</td><td>✅</td><td>✅</td><td>Live, exact stage + reason named</td></tr>
+<tr><td>ESCALATE</td><td>✅</td><td>✅</td><td>✅</td><td>Live, exact reason text + Intent line</td></tr>
+<tr><td>Behavioral / risk history</td><td>✅</td><td>✅</td><td>✅</td><td>Escalate reason names the deviation math</td></tr>
+<tr><td>Concurrent budget protection</td><td>✅ — hero</td><td>✅</td><td>✅</td><td>Live 20-request attack, real numbers, zero-overspend banner</td></tr>
+<tr><td>Revocation + ancestor cascade</td><td>✅</td><td>✅</td><td>✅</td><td>Live before/after, real denial reason</td></tr>
+<tr><td>Evidence ledger (seq/hash/sig)</td><td>✅</td><td>✅</td><td>✅</td><td>Live verify, real entry data</td></tr>
+<tr><td>Tamper detection</td><td>✅ — hero</td><td>✅</td><td>✅</td><td>Live tamper → re-verify, named entry</td></tr>
+<tr><td>Independent verifier</td><td>✅</td><td>🟡 optional</td><td>🟡 optional</td><td>Terminal exit code, time-permitting</td></tr>
+<tr><td>Persistence / auditability</td><td>✅ (folded into evidence beat)</td><td>✅</td><td>✅</td><td>Ledger entries surviving refresh</td></tr>
+<tr><td>Architecture / test credibility</td><td>✅</td><td>✅</td><td>🟡 pre-captured</td><td>434/58 pass counts</td></tr>
+<tr><td>Honest AI / demo-mode disclosure</td><td>✅</td><td>✅</td><td>N/A</td><td>The judge's own on-screen disclosure text</td></tr>
+<tr><td>Six-workspace UI / environment art</td><td>Never named directly</td><td>✅ ambient throughout</td><td>N/A</td><td>Product feel, not a technical claim</td></tr>
+<tr><td>Mission expiry / cancellation</td><td>⚪ omitted</td><td>⚪</td><td>⚪</td><td>Real, not a headline beat for 8 minutes</td></tr>
+<tr><td>Idempotency / crash safety</td><td>⚪ omitted</td><td>⚪</td><td>⚪</td><td>Internal; not visually demonstrable in this format</td></tr>
+<tr><td>Stripe test-mode rail</td><td>⚪ omitted</td><td>⚪</td><td>⚪</td><td>Never active in demo mode by design — would need its own caveat to explain</td></tr>
+</table>
+<p class="faint">No implemented, judge-relevant feature is claimed without corresponding on-screen proof. The three ⚪ omissions are deliberate time-budget decisions, not gaps in the product.</p>
+</div>
+
+<!-- ============ PART 7 — WHAT MAKES AEGIS DIFFERENT ============ -->
+<div class="section brk" id="p7">
+<div class="kicker">Part 7</div>
+<h2>7. ⭐ The Features We Must Explain Exceptionally Well</h2>
+
+<table>
+<thead><tr><th style="width:150pt">Feature</th><th>What most teams would say</th><th>What WE demonstrate</th></tr></thead>
+<tr><td>Attenuation</td><td>"Agents can delegate permissions to sub-agents."</td><td>A live attempt to delegate <i>wider</i> authority, refused by the token's own math, with the actual error string on screen.</td></tr>
+<tr><td>Bounded missions</td><td>"You can set a spending limit."</td><td>The distinction between a standing capability ceiling and a bounded, cumulative mission budget — two independent, simultaneously-enforced boundaries — shown as live arithmetic, not a static number.</td></tr>
+<tr><td>Concurrency-safe budget enforcement</td><td>"We prevent overspending."</td><td>Twenty real, genuinely concurrent requests fired at one budget, resolving live, with a server-confirmed zero-overspend figure — a property most teams never load-test at all.</td></tr>
+<tr><td>Revocation</td><td>"You can revoke access."</td><td>The exact same request, before and after, flipping from ALLOW to DENY in front of the viewer — not a described capability, a proven state change.</td></tr>
+<tr><td>Tamper-evident evidence</td><td>"We log everything."</td><td>A live tamper of stored data, bypassing the application's own write path entirely, and the status flipping red — audit trail as a checkable claim, not a trusted log.</td></tr>
+<tr><td>Independent verification</td><td>"Our system is secure."</td><td>A second, separately-authored tool that imports zero code from AEGIS itself, reaching the same conclusion offline — a rare, genuinely strong trust property.</td></tr>
+</table>
+
+<div class="card nobreak">
+<h4>The one sentence to internalize</h4>
+<p style="margin:0">AEGIS is not <i>"an AI that decides whether to spend money."</i> It is a system that
+ensures that even when an AI is genuinely powerful, its authority remains <b>bounded,
+revocable, and independently verifiable</b> — regardless of what the AI itself decides
+to do.</p>
+</div>
+</div>
+
+<!-- ============ PART 8 — THE ENGINEERING STORY ============ -->
+<div class="section brk" id="p8">
+<div class="kicker">Part 8</div>
+<h2>8. The Engineering Story — What Could Break, and How AEGIS Prevents It</h2>
+<p class="dim">Only real, currently-supported problems — nothing invented for narrative effect.</p>
+
+<h3>Challenge 1 — The concurrent mission budget problem</h3>
+<div class="card nobreak">
+<h4>The problem</h4>
+<p>A mission has a $2,000 budget. A naive implementation checks the remaining balance,
+sees it's fine, and then writes the spend — two separate steps. That's fine for one
+request at a time.</p>
+<h4>Why it mattered</h4>
+<p>Autonomous agents don't operate one request at a time. Twenty simultaneous $380
+attempts against a $2,000 budget represent $7,600 of exposure. If each request
+independently checks the balance before any of them commits their spend, every one of
+them can observe the same "budget available" state and all proceed — a textbook
+check-then-write race condition, invisible in sequential testing and real under load.</p>
+<h4>What a naive implementation would do</h4>
+<p><code>if (spent + requested &lt;= budget) { spend(); }</code> — correct in isolation,
+unsafe under concurrency, because the read and the write are two separate moments a
+second request can land inside of.</p>
+<h4>What AEGIS does instead</h4>
+<p><code>src/mission/reservation.ts</code>'s <code>reserve()</code> is a single atomic
+SQL <code>UPDATE</code> that computes <code>budget − reserved − settled ≥ requested</code>
+and increments the reservation in the same write — there is no separate read step for a
+second request to race against. The database's own transaction isolation decides who
+wins, not request ordering.</p>
+<h4>How we prove it</h4>
+<p>The Security workspace's live 20-request attack, plus an adversarial automated test
+(<code>src/mission/__tests__/mission-reservation.test.ts</code>) that fires genuinely
+concurrent calls and asserts on final server state. Say it like this: <i>"We realized a
+simple budget check was not enough — under concurrent requests, multiple transactions
+could observe the same remaining balance. So enforcement is built around the actual
+invariant: no combination of concurrent requests may overspend the mission budget."</i></p>
+</div>
+
+<h3>Challenge 2 — The trust/evidence problem</h3>
+<div class="card nobreak">
+<h4>The problem</h4>
+<p>A dashboard saying a decision happened is not proof that it happened, or that it
+hasn't been altered since. If historical records can be edited invisibly, the evidence
+is only as trustworthy as whoever is currently allowed to write to the database.</p>
+<h4>Why it mattered</h4>
+<p>An audit trail that can be silently rewritten is not an audit trail — it's a claim.
+For a system whose entire pitch is provable boundaries, self-reported evidence would be
+a real credibility gap.</p>
+<h4>What a naive implementation would do</h4>
+<p>Write plain log rows to a table and trust that nobody with database access ever
+edits them.</p>
+<h4>What AEGIS does instead</h4>
+<p>Every ledger entry is Ed25519-signed and hash-chained to the entry before it. A
+retroactive edit breaks a verifiable mathematical relationship, not just "looks
+suspicious." And critically, verification doesn't have to trust AEGIS's own check — a
+completely separate tool (<code>verifier/</code>) that imports zero code from the main
+application re-derives integrity from only an exported file and the public key.</p>
+<h4>How we prove it</h4>
+<p>Live: verify (green) → tamper a stored entry directly, bypassing the app entirely →
+verify again (red, exact entry named). Say it like this: <i>"An audit trail is not
+useful if it can be rewritten without anyone knowing. So the question isn't whether our
+dashboard says the history is intact — it's whether a tool that trusts nothing about us
+agrees."</i></p>
+</div>
+</div>
+
+<!-- ============ PART 9 — REHEARSAL ============ -->
+<div class="section brk" id="p9">
+<div class="kicker">Part 9</div>
+<h2>9. Manual Recording Rehearsal Plan</h2>
+
+<table>
+<thead><tr><th style="width:110pt">Rehearsal</th><th>What to do</th><th>Goal</th></tr></thead>
+<tr><td>1 — Silent UI rehearsal</td><td>Click through the entire Part 4 order with no speaking at all, including all pre-staging.</td><td>Confirm every click, field, and button still matches this document exactly — the UI is the source of truth, not this script.</td></tr>
+<tr><td>2 — Spoken rehearsal</td><td>Read the Part 5 script aloud while operating the UI, at a natural pace, no camera.</td><td>Find any line that doesn't sync naturally with the on-screen action; adjust wording, not the UI.</td></tr>
+<tr><td>3 — Timed rehearsal</td><td>Same as above, with a stopwatch, no stopping for mistakes.</td><td>Confirm total runtime lands in 7:00–8:00 (target 7:35). Use the timing checkpoints below.</td></tr>
+<tr><td>4 — Final camera take</td><td>Record for real, following the runbook in Part 4 exactly, pre-staging already done.</td><td>Ship it.</td></tr>
+</table>
+
+<h3>Timing checkpoints — where you should be in the story</h3>
+<div class="checkpage">
+<div class="tc"><span class="m">1:00</span><span class="d">Should be mid-Authority segment — attenuation error already shown or about to appear.</span></div>
+<div class="tc"><span class="m">2:00</span><span class="d">Should be finishing the Mission segment, about to open Transactions.</span></div>
+<div class="tc"><span class="m">3:00</span><span class="d">Should be mid-pipeline segment — ALLOW shown, DENY about to fire or just fired.</span></div>
+<div class="tc"><span class="m">4:00</span><span class="d">Should be finishing ESCALATE, about to switch to Security for the concurrent race.</span></div>
+<div class="tc"><span class="m">5:00</span><span class="d">Should be finishing the concurrent race or already into revocation.</span></div>
+<div class="tc"><span class="m">6:00</span><span class="d">Should be mid-Evidence segment — verify shown, tamper about to happen or just happened.</span></div>
+<div class="tc"><span class="m">7:00</span><span class="d">Should be entering the architecture-credibility montage or already at the closing line.</span></div>
+</div>
+<p class="faint">If you are more than ~30 seconds behind any checkpoint, tighten the next segment's dialogue rather than rushing the clicks — a rushed click sequence looks worse on camera than a slightly faster voice-over.</p>
+</div>
+
+<!-- ============ PART 10 — RETAKE / FAILURE RECOVERY ============ -->
+<div class="section brk" id="p10">
+<div class="kicker">Part 10</div>
+<h2>10. Retake / Failure Recovery</h2>
+<table>
+<thead><tr><th style="width:110pt">Problem</th><th>What happened</th><th style="width:70pt">Retake immediately?</th><th style="width:70pt">Reset required?</th><th>Exact recovery</th></tr></thead>
+<tr><td>Misspeaking</td><td>Stumbled on a line</td><td>Yes</td><td>No</td><td>Pause, re-say the sentence from its start; trim in editing.</td></tr>
+<tr><td>Wrong click</td><td>Clicked the wrong tab/button</td><td>Yes</td><td>Usually no</td><td>Navigate back to the correct state and re-do the beat; cut the misclick in editing.</td></tr>
+<tr><td>Server error</td><td>Unexpected 500 or crash</td><td>No</td><td>Yes</td><td>Check the terminal for the error, restart per Step 1, re-verify <code>/demo-mode</code>, re-stage.</td></tr>
+<tr><td>ESCALATE baseline consumed</td><td>Accidentally submitted the $600 transaction before recording, or reused an agent that already has unrelated history</td><td>No</td><td>Partial</td><td>Switch to a fresh agent, re-submit the 3× $50 baseline (Part 3A), retry.</td></tr>
+<tr><td>Concurrent scenario "weird" split</td><td>Split looks unbalanced (e.g. 1 allowed / 19 blocked)</td><td>No — this is not a failure</td><td>No</td><td>Say the numbers that actually appear; the zero-overspend claim is the only fixed one. Re-run with <b>New attack mission</b> only if you personally want a more "photogenic" split — not required.</td></tr>
+<tr><td>Revocation state confusion</td><td>Used the Authority tab's manual Revoke instead of the Security scenario</td><td>Yes</td><td>No</td><td>Re-do the beat using Security → <b>Run scenario</b> only.</td></tr>
+<tr><td>Evidence already tampered</td><td>A rehearsal tamper wasn't reset before this take</td><td>No</td><td>Yes</td><td>Fresh server restart on a new <code>AEGIS_DB_PATH</code>, re-stage.</td></tr>
+<tr><td>Accidental database state change</td><td>Something unexpected happened to agent/mission state mid-take</td><td>Depends</td><td>Depends</td><td>Check Overview's fact grid to see current state; if it's confusing on camera, restart clean rather than narrate around it.</td></tr>
+</table>
+</div>
+
+<!-- ============ PART 11 — FINAL PRE-RECORD CHECKLIST ============ -->
+<div class="section brk" id="p11">
+<div class="kicker">Part 11 — Print This Page</div>
+<h2>11. Final Pre-Record Checklist</h2>
+<div class="cheat">
+<h4>Technical</h4>
+<ul class="checklist">
+<li>Server running (<code>AEGIS_DEMO_MODE=true AEGIS_DB_PATH=./aegis-recording.db PORT=8787 npm start</code>)</li>
+<li><code>curl http://localhost:8787/demo-mode</code> → <code>{"demoMode":true}</code></li>
+<li>Browser open at <code>http://localhost:8787</code>, zoom 100%, fullscreen/1920×1080</li>
+<li>Recording software ready, test capture reviewed</li>
+<li>Microphone tested</li>
+</ul>
+<h4>Application state</h4>
+<ul class="checklist">
+<li>Root agent staged ($2,000 · flights,hotels,software)</li>
+<li>ALLOW/DENY agent + mission staged ($800 budget, untouched)</li>
+<li>ESCALATE baseline staged — 3× $50 already submitted, $600 <b>not yet</b> submitted</li>
+<li>Concurrent-race attack mission — will be created fresh, live, during the take (do not pre-spend it)</li>
+<li>Revocation — no pre-staging needed, scenario is self-contained</li>
+<li>Evidence — currently clean, "Ledger verified," not yet tampered</li>
+<li>Tamper segment reserved for absolute last</li>
+</ul>
+<h4>Video</h4>
+<ul class="checklist">
+<li>This playbook (or Part 5's script + Part 11 cheat sheet) open on a second screen or printed</li>
+<li>Notifications disabled, Do Not Disturb on</li>
+<li>No secrets visible anywhere on screen</li>
+<li>Unrelated windows/tabs closed</li>
+<li>Team ready, quiet room confirmed</li>
+</ul>
+</div>
+</div>
+
+<!-- ============ PART 12 — AFTER RECORDING ============ -->
+<div class="section brk" id="p12">
+<div class="kicker">Part 12</div>
+<h2>12. After Recording — Before You Submit</h2>
+<table>
+<thead><tr><th style="width:190pt">Check</th><th>What to confirm</th></tr></thead>
+<tr><td>Duration</td><td>Between 7:00 and 8:00 total — trim from the architecture montage (Part 5, 06:25–07:00) first if over, since it's the most compressible segment.</td></tr>
+<tr><td>Every major feature shown</td><td>Cross-check against Part 6's matrix — every ✅ row should actually appear in the final edit.</td></tr>
+<tr><td>Audio</td><td>Understandable throughout, no clipping, consistent level across cuts from different takes.</td></tr>
+<tr><td>UI readable</td><td>Text legible at the video's final export resolution, not just on your recording monitor.</td></tr>
+<tr><td>No secrets exposed</td><td>Scrub every frame that shows a terminal — no real API keys, no `.env` contents, no signing key hex strings.</td></tr>
+<tr><td>No false claims</td><td>Nothing implies Razorpay integration, a live Anthropic call during this recording, blockchain, or production-readiness — none of these are true of this build.</td></tr>
+<tr><td>Concurrent guarantee explained correctly</td><td>The spoken numbers match what's actually on screen for your final take's split — not the numbers from an earlier rehearsal.</td></tr>
+<tr><td>Evidence tamper failure visible</td><td>The red "INTEGRITY VIOLATION DETECTED" state and the named entry are both clearly readable, not cut too early.</td></tr>
+<tr><td>Strong ending</td><td>Closing line lands, holds 2 seconds, no trailing dead air before the cut to black.</td></tr>
+<tr><td>No accidental dead time</td><td>No long unedited waits, no visible typing of pre-stageable fields, no repeated explanations of the same UI label.</td></tr>
+</table>
+</div>
+
+</body>
+</html>
