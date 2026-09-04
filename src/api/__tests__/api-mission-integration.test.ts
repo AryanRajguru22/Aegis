@@ -412,6 +412,67 @@ describe("mission integration — a mission can never be used after completion/c
       assert.equal(stripeRail.calls.length, 0);
     });
   }
+
+  /**
+   * The real-world case the loop above does NOT cover: a mission whose expiresAt has
+   * genuinely passed, while its stored status is STILL "active" — exactly what
+   * register() leaves behind, since nothing ever transitioned it automatically.
+   * Confirmed, via a full backend audit, to be a real, previously-unenforced gap:
+   * src/mission/policy.ts's checkMissionGate only ever checked `status`, and nothing
+   * else in the codebase ever set status to "expired" based on wall-clock time — an
+   * expired-by-clock mission with status="active" was silently NOT denied. Fixed by
+   * routes/transactions.ts's reconcileMissionExpiry(), called on every mission-gated
+   * attempt before checkMissionGate ever runs.
+   */
+  test("a mission whose expiresAt has genuinely passed (status still 'active') is denied at transaction time, and the status is persisted as 'expired' for future reads", async () => {
+    const { app, deps, stripeRail } = buildHarness();
+    const { token } = await createPrincipalAndAgent(app);
+    deps.missions.register(missionInput({ expiresAt: new Date(Date.now() - 60_000).toISOString() }));
+    assert.equal(deps.missions.get("mission-1")!.status, "active", "sanity: register() never sets status to expired on its own");
+
+    const res = await postTransaction(app, token, "key-1", {
+      transaction: defaultTransaction({ category: "flights" }),
+      counterparty: "acme-airlines",
+      missionId: "mission-1",
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.decision.verdict, "deny");
+    assert.equal(res.body.decision.source, "mission");
+    assert.match(res.body.decision.reason, /expired/i);
+    assert.equal(stripeRail.calls.length, 0);
+    assert.equal(deps.missions.get("mission-1")!.status, "expired", "the reconciliation must persist the transition, not just deny this one attempt");
+  });
+
+  test("GET /simulate (dry run) also reconciles and denies an expired mission — the check is not execute-only", async () => {
+    const { app, deps } = buildHarness();
+    const { token } = await createPrincipalAndAgent(app);
+    deps.missions.register(missionInput({ expiresAt: new Date(Date.now() - 60_000).toISOString() }));
+
+    const res = await request(app)
+      .post("/simulate")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ transaction: defaultTransaction({ category: "flights" }), counterparty: "acme-airlines", missionId: "mission-1" });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.decision.verdict, "deny");
+    assert.match(res.body.decision.reason, /expired/i);
+  });
+
+  test("a mission whose expiresAt is still in the future is unaffected — reconciliation never denies a genuinely active mission", async () => {
+    const { app, deps } = buildHarness();
+    const { token } = await createPrincipalAndAgent(app);
+    deps.missions.register(missionInput({ expiresAt: new Date(Date.now() + 60_000).toISOString() }));
+
+    const res = await postTransaction(app, token, "key-1", {
+      transaction: defaultTransaction({ category: "flights" }),
+      counterparty: "acme-airlines",
+      missionId: "mission-1",
+    });
+
+    assert.equal(res.body.decision.verdict, "allow");
+    assert.equal(deps.missions.get("mission-1")!.status, "active");
+  });
 });
 
 describe("mission integration — process restart during/after a reservation", () => {

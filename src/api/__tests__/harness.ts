@@ -11,11 +11,12 @@ import { createApp } from "../server.js";
 import { wrapWithNotifications } from "../notifyingLedger.js";
 import { createInMemoryIdempotencyCache } from "../idempotency.js";
 import { createSqliteMissionReservationStore } from "../../mission/reservation.js";
+import { createInMemorySimulationCache } from "../../decision/simulationCache.js";
 import type { AppDependencies } from "../deps.js";
 
 export class ScriptedIntentJudge implements IntentJudge {
   calls: IntentJudgeInput[] = [];
-  constructor(private readonly respond: (input: IntentJudgeInput) => IntentJudgment) {}
+  constructor(private readonly respond: (input: IntentJudgeInput) => IntentJudgment | Promise<IntentJudgment> | Promise<never>) {}
   async judge(input: IntentJudgeInput): Promise<IntentJudgment> {
     this.calls.push(input);
     return this.respond(input);
@@ -71,6 +72,7 @@ export function buildHarness(overrides: Partial<AppDependencies> = {}) {
     idempotency,
     missions,
     reservations,
+    simulationCache: createInMemorySimulationCache(),
     judgeTimeoutMs: 500,
     ...overrides,
   };

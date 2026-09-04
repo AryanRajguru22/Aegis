@@ -2,11 +2,13 @@ import { Router, type RequestHandler } from "express";
 import { decideTransaction } from "../../decision/decide.js";
 import { executeTransaction } from "../../execution/executeTransaction.js";
 import type { Caveats, TransactionRequest } from "../../capability/types.js";
+import type { MissionRecord } from "../../state/missions.js";
 import type { AppDependencies } from "../deps.js";
 import { ApiError } from "../errors.js";
 import type { ClaimOutcome, IdempotencyCache, IdempotencyRecord } from "../idempotency.js";
 import { checkMissionGate, computeMissionSpent, validateMissionAgainstToken, LEDGER_KIND_MISSION_POLICY_VERDICT, LEDGER_KIND_MISSION_TRANSACTION_LINK, LEDGER_KIND_MISSION_PIPELINE_OUTCOME } from "../../mission/index.js";
 import { parseCounterparty, parseOptionalCounterparty, parseOptionalMissionId, parseTransactionBody } from "../validation.js";
+import { computeSimulationFingerprint } from "../../decision/simulationCache.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 25;
 const DEFAULT_WAIT_TIMEOUT_MS = 15_000;
@@ -100,6 +102,26 @@ type MissionGateResult =
  * least-trusted-input first, mirroring src/decision/decide.ts's own documented
  * ordering discipline.
  */
+/**
+ * Closes the gap explicitly flagged (but deliberately left unimplemented, "a future
+ * orchestration step") in src/mission/policy.ts's own doc comment on checkMissionGate:
+ * that pure, synchronous function only ever checks `mission.status`, never wall-clock
+ * time — nothing previously transitioned a mission past its own expiresAt into status
+ * "expired", so an expired-by-clock mission with status still "active" was silently
+ * NOT denied at transaction time (found during a full backend audit; confirmed no
+ * existing test covered this). This reconciliation runs first, lazily, on every
+ * mission-gated attempt — no cron job, no background timer — and persists the
+ * transition via the exact same MissionStore.close() the cancel route already uses,
+ * so checkMissionGate's EXISTING `status !== "active"` branch now correctly denies an
+ * expired mission with zero changes to that pure function itself.
+ */
+function reconcileMissionExpiry(deps: AppDependencies, mission: MissionRecord): MissionRecord {
+  if (mission.status === "active" && new Date(mission.expiresAt).getTime() <= Date.now()) {
+    return deps.missions.close(mission.missionId, "expired");
+  }
+  return mission;
+}
+
 function evaluateMissionGate(
   deps: AppDependencies,
   agent: { agentId: string; principalId: string; caveats: Record<string, unknown> },
@@ -107,13 +129,17 @@ function evaluateMissionGate(
   transaction: TransactionRequest & { purpose: string },
   counterparty: string
 ): MissionGateResult {
-  const mission = deps.missions.get(missionId);
+  let mission = deps.missions.get(missionId);
   if (!mission) {
     return { kind: "not_found" };
   }
+  // Ownership checked BEFORE reconciling/observing expiry — a non-owner must see
+  // exactly the same "not_owned" result regardless of the mission's real expiry
+  // state, never a hint that distinguishes the two.
   if (mission.agentId !== agent.agentId || mission.principalId !== agent.principalId) {
     return { kind: "not_owned" };
   }
+  mission = reconcileMissionExpiry(deps, mission);
 
   try {
     validateMissionAgainstToken(mission, agent.caveats as unknown as Caveats);
@@ -233,6 +259,28 @@ export function createTransactionsRouter(deps: AppDependencies, requireAgent: Re
       }
     );
 
+    // Only ever caches the intent-judge result — never the policy/capability verdict,
+    // never baseline flags — and only when the risk stage actually ran (policy already
+    // denying means decision.risk is absent, and there is nothing intent-judge-shaped
+    // to reuse). See simulationCache.ts's doc comment for the full invalidation design;
+    // this fingerprint uses the SAME raw presented token and effective delegatedGoal
+    // that this exact decideTransaction call just used, so a later /transactions call
+    // can only ever get a cache hit for a request that is identical in every field this
+    // fingerprint covers.
+    if (deps.simulationCache && decision.risk) {
+      const fingerprint = computeSimulationFingerprint({
+        tokenBase64: req.agentToken!,
+        delegatedGoal,
+        transaction,
+        counterparty: counterparty ?? "",
+        missionId,
+      });
+      deps.simulationCache.set(fingerprint, {
+        intentJudgment: decision.risk.intentJudgment,
+        computedAt: Date.now(),
+      });
+    }
+
     res.status(200).json({ agentId: agent.agentId, decision });
   });
 
@@ -341,6 +389,24 @@ export function createTransactionsRouter(deps: AppDependencies, requireAgent: Re
     }
 
     // outcome.kind === "claimed": this request, and only this request, executes.
+    //
+    // Consulted strictly AFTER the mission preflight above has finalized delegatedGoal
+    // (a mission-narrowed goal must be part of the fingerprint, and this is the first
+    // point it's known) and strictly BEFORE executeTransaction, which re-runs the
+    // capability/policy check fresh regardless of what's found here — a cache hit only
+    // ever skips the intent-judge network call, never any deterministic check. See
+    // simulationCache.ts for why the raw presented token is part of the fingerprint
+    // (any authority change invalidates automatically) and why a hit is single-use.
+    const cached = deps.simulationCache?.get(
+      computeSimulationFingerprint({
+        tokenBase64: req.agentToken!,
+        delegatedGoal,
+        transaction,
+        counterparty,
+        missionId,
+      })
+    );
+
     let result;
     try {
       result = await executeTransaction(
@@ -361,6 +427,7 @@ export function createTransactionsRouter(deps: AppDependencies, requireAgent: Re
           rails: deps.rails,
           baselineWindow: deps.baselineWindow,
           judgeTimeoutMs: deps.judgeTimeoutMs,
+          cachedIntentJudgment: cached?.intentJudgment,
         }
       );
     } catch (error) {

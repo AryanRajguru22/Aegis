@@ -1,8 +1,18 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { isDemoModeEnabled, createDemoIntentJudge, createServerIntentJudge, selectRailAdapters } from "../demoMode.js";
+import {
+  isDemoModeEnabled,
+  createDemoIntentJudge,
+  createServerIntentJudge,
+  selectRailAdapters,
+  parseExplicitJudgeTimeoutMs,
+  defaultJudgeTimeoutMs,
+  GEMINI_DEFAULT_JUDGE_TIMEOUT_MS,
+} from "../demoMode.js";
 import { AnthropicIntentJudge } from "../../risk/anthropicJudge.js";
+import { GeminiIntentJudge } from "../../risk/geminiJudge.js";
+import { DEFAULT_JUDGE_TIMEOUT_MS, safeJudge } from "../../decision/decide.js";
 import type { RailAdapter, RailExecutionRequest, RailExecutionResult } from "../../rails/types.js";
 
 /**
@@ -86,6 +96,158 @@ describe("createServerIntentJudge — demo mode ON vs OFF selection (the core St
     const judge = createServerIntentJudge({ demoMode: true, anthropicApiKey: "sk-ant-a-real-shaped-key-present-too" });
     assert.ok(!(judge instanceof AnthropicIntentJudge), "an explicitly-enabled demo mode must select the deterministic judge, not silently prefer a present key");
     const result = await judge.judge({ delegatedGoal: "x", transaction: { amountMinorUnits: 1, currency: "USD", category: "x", rail: "mock_x402", purpose: "x" } });
+    assert.equal(result.verdict, "consistent");
+  });
+});
+
+describe("createServerIntentJudge — Gemini provider selection (added alongside Anthropic, same precedence rules)", () => {
+  test("demo mode wins even with AEGIS_RISK_PROVIDER=gemini and a real-shaped Gemini key present", async () => {
+    const judge = createServerIntentJudge({
+      demoMode: true,
+      riskProvider: "gemini",
+      geminiApiKey: "gemini-shaped-key",
+    });
+    assert.ok(!(judge instanceof GeminiIntentJudge), "demo mode must win regardless of an explicit provider choice");
+    const result = await judge.judge({ delegatedGoal: "x", transaction: { amountMinorUnits: 1, currency: "USD", category: "x", rail: "mock_x402", purpose: "x" } });
+    assert.equal(result.verdict, "consistent");
+  });
+
+  test('AEGIS_RISK_PROVIDER="gemini" with only GEMINI_API_KEY set → GeminiIntentJudge is constructed', () => {
+    const judge = createServerIntentJudge({ demoMode: false, riskProvider: "gemini", geminiApiKey: "gemini-shaped-key" });
+    assert.ok(judge instanceof GeminiIntentJudge);
+  });
+
+  test('AEGIS_RISK_PROVIDER="gemini" but GEMINI_API_KEY missing → throws, does not silently fall back to Anthropic even if that key is also present', () => {
+    assert.throws(
+      () => createServerIntentJudge({ demoMode: false, riskProvider: "gemini", anthropicApiKey: "sk-ant-present-too" }),
+      /AEGIS_RISK_PROVIDER=gemini requires GEMINI_API_KEY/
+    );
+  });
+
+  test('AEGIS_RISK_PROVIDER="anthropic" with only ANTHROPIC_API_KEY set → AnthropicIntentJudge is constructed', () => {
+    const judge = createServerIntentJudge({ demoMode: false, riskProvider: "anthropic", anthropicApiKey: "sk-ant-shaped-key" });
+    assert.ok(judge instanceof AnthropicIntentJudge);
+  });
+
+  test('AEGIS_RISK_PROVIDER="anthropic" but ANTHROPIC_API_KEY missing → throws, does not silently fall back to Gemini even if that key is also present', () => {
+    assert.throws(
+      () => createServerIntentJudge({ demoMode: false, riskProvider: "anthropic", geminiApiKey: "gemini-present-too" }),
+      /AEGIS_RISK_PROVIDER=anthropic requires ANTHROPIC_API_KEY/
+    );
+  });
+
+  test("no AEGIS_RISK_PROVIDER, only GEMINI_API_KEY set → Gemini is inferred automatically", () => {
+    const judge = createServerIntentJudge({ demoMode: false, geminiApiKey: "gemini-shaped-key" });
+    assert.ok(judge instanceof GeminiIntentJudge);
+  });
+
+  test("no AEGIS_RISK_PROVIDER, only ANTHROPIC_API_KEY set → Anthropic is inferred automatically (unchanged pre-Gemini behavior)", () => {
+    const judge = createServerIntentJudge({ demoMode: false, anthropicApiKey: "sk-ant-shaped-key" });
+    assert.ok(judge instanceof AnthropicIntentJudge);
+  });
+
+  test("no AEGIS_RISK_PROVIDER, BOTH keys set → throws rather than silently guessing a provider", () => {
+    assert.throws(
+      () => createServerIntentJudge({ demoMode: false, anthropicApiKey: "sk-ant-shaped-key", geminiApiKey: "gemini-shaped-key" }),
+      /AEGIS_RISK_PROVIDER=anthropic or AEGIS_RISK_PROVIDER=gemini/
+    );
+  });
+
+  test("neither key set, no AEGIS_RISK_PROVIDER → throws with the same fail-closed behavior as before Gemini existed", () => {
+    assert.throws(
+      () => createServerIntentJudge({ demoMode: false }),
+      /ANTHROPIC_API_KEY is required/,
+      "must remain a hard failure for anyone who has only ever configured Anthropic"
+    );
+  });
+
+  test("an invalid AEGIS_RISK_PROVIDER value fails clearly at startup, regardless of which keys are set", () => {
+    assert.throws(
+      () => createServerIntentJudge({ demoMode: false, riskProvider: "openai", anthropicApiKey: "sk-ant-shaped-key" }),
+      /Invalid AEGIS_RISK_PROVIDER value: "openai"/
+    );
+  });
+});
+
+describe("parseExplicitJudgeTimeoutMs — AEGIS_JUDGE_TIMEOUT_MS validation", () => {
+  test("unset (undefined) is valid and means 'no explicit override'", () => {
+    assert.equal(parseExplicitJudgeTimeoutMs(undefined), undefined);
+  });
+
+  test("a valid positive integer string is parsed to the equivalent number", () => {
+    assert.equal(parseExplicitJudgeTimeoutMs("15000"), 15000);
+    assert.equal(parseExplicitJudgeTimeoutMs("1"), 1);
+    assert.equal(parseExplicitJudgeTimeoutMs("60000"), 60000);
+  });
+
+  test("zero is rejected, not silently treated as unset or as no-timeout", () => {
+    assert.throws(() => parseExplicitJudgeTimeoutMs("0"), /Invalid AEGIS_JUDGE_TIMEOUT_MS/);
+  });
+
+  test("negative values are rejected", () => {
+    assert.throws(() => parseExplicitJudgeTimeoutMs("-1"), /Invalid AEGIS_JUDGE_TIMEOUT_MS/);
+    assert.throws(() => parseExplicitJudgeTimeoutMs("-45000"), /Invalid AEGIS_JUDGE_TIMEOUT_MS/);
+  });
+
+  test("non-numeric and malformed values are rejected, never silently coerced", () => {
+    for (const bad of ["abc", "NaN", "Infinity", "", "   ", "12.5", "8000ms", "1e5", "0x10", "+100"]) {
+      assert.throws(
+        () => parseExplicitJudgeTimeoutMs(bad),
+        /Invalid AEGIS_JUDGE_TIMEOUT_MS/,
+        `expected "${bad}" to be rejected`
+      );
+    }
+  });
+
+  test("incidental surrounding whitespace is tolerated (trimmed), not treated as malformed content", () => {
+    assert.equal(parseExplicitJudgeTimeoutMs(" 100"), 100);
+    assert.equal(parseExplicitJudgeTimeoutMs("100 "), 100);
+    assert.equal(parseExplicitJudgeTimeoutMs("  45000  "), 45000);
+  });
+});
+
+describe("defaultJudgeTimeoutMs — provider-aware default when AEGIS_JUDGE_TIMEOUT_MS is unset", () => {
+  test("the non-Gemini default is exactly src/decision/decide.ts's own DEFAULT_JUDGE_TIMEOUT_MS — unchanged from before Gemini existed", () => {
+    assert.equal(defaultJudgeTimeoutMs(false), DEFAULT_JUDGE_TIMEOUT_MS);
+    assert.equal(defaultJudgeTimeoutMs(false), 8000, "the original, documented 8-second default must not have silently changed");
+  });
+
+  test("the Gemini default is comfortably above real observed Gemini latency (20-28s live)", () => {
+    assert.equal(defaultJudgeTimeoutMs(true), GEMINI_DEFAULT_JUDGE_TIMEOUT_MS);
+    assert.ok(GEMINI_DEFAULT_JUDGE_TIMEOUT_MS > 28_000, "must exceed the slowest observed real Gemini call with real margin");
+  });
+
+  test("the two defaults are genuinely different values, proving this is actually provider-aware and not a no-op", () => {
+    assert.notEqual(defaultJudgeTimeoutMs(true), defaultJudgeTimeoutMs(false));
+  });
+});
+
+describe("Configured timeout still flows through the existing safeJudge fail-safe path (escalation, never a silent allow)", () => {
+  test("a judge slower than a short configured timeout still resolves to 'unavailable', exactly as safeJudge already guarantees for any judge", async () => {
+    const neverRespondingJudge = { judge: () => new Promise<never>(() => {}) };
+    const result = await safeJudge(
+      neverRespondingJudge,
+      { delegatedGoal: "g", transaction: { amountMinorUnits: 1, currency: "USD", category: "c", rail: "r", purpose: "p" } },
+      50 // a deliberately short, explicitly-configured-style timeout
+    );
+    assert.equal(result.verdict, "unavailable");
+    assert.equal(result.category, "timeout");
+    assert.match(result.rationale, /timed out/i);
+    assert.equal(result.rationale.includes("50ms"), false, "the safe rationale must be a static, category-only message — never the raw internal timeout detail");
+  });
+
+  test("a judge that resolves comfortably within a Gemini-sized timeout is NOT falsely treated as unavailable", async () => {
+    const fastEnoughJudge = {
+      judge: () =>
+        new Promise<{ verdict: "consistent"; rationale: string }>((resolve) =>
+          setTimeout(() => resolve({ verdict: "consistent", rationale: "ok" }), 20)
+        ),
+    };
+    const result = await safeJudge(
+      fastEnoughJudge,
+      { delegatedGoal: "g", transaction: { amountMinorUnits: 1, currency: "USD", category: "c", rail: "r", purpose: "p" } },
+      GEMINI_DEFAULT_JUDGE_TIMEOUT_MS
+    );
     assert.equal(result.verdict, "consistent");
   });
 });

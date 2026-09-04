@@ -9,6 +9,7 @@ import type { NotifyingLedgerStore } from "./notifyingLedger.js";
 import type { IdempotencyCache } from "./idempotency.js";
 import type { MissionStore } from "../state/missions.js";
 import type { MissionReservationStore } from "../mission/reservation.js";
+import type { SimulationCache } from "../decision/simulationCache.js";
 
 /** Everything the API layer needs, all injected — the same dependency-injection shape used by src/decision and src/execution, so the app can be constructed once with real dependencies (src/api/main.ts, not built in this step) or with scripted/fake ones for tests (see __tests__), without the routes themselves changing. */
 export interface AppDependencies {
@@ -24,6 +25,14 @@ export interface AppDependencies {
   /** Must be constructed AFTER `idempotency` for the same underlying db — see src/mission/reservation.ts's ordering requirement on createSqliteMissionReservationStore. */
   missions: MissionStore;
   reservations: MissionReservationStore;
+  /**
+   * Backs the Simulate → Execute intent-judgment reuse path (see
+   * src/decision/simulationCache.ts). Optional so existing test harnesses that never
+   * exercise /simulate followed by /transactions don't need to construct one — when
+   * omitted, routes/transactions.ts simply never has a cache to consult and every
+   * Execute calls the real intent judge fresh, exactly as before this feature existed.
+   */
+  simulationCache?: SimulationCache;
   baselineWindow?: BaselineWindow;
   judgeTimeoutMs?: number;
   /** How often a concurrent request waiting on an in-flight idempotency claim re-checks its status. See routes/transactions.ts. Defaults to 25ms. */
