@@ -151,7 +151,7 @@ zero external accounts or API keys. See [`docs/SECURITY_MODEL.md`](docs/SECURITY
 ## Quickstart
 
 ```bash
-git clone https://github.com/AryanRajguru22/aegis.git
+git clone https://github.com/AryanRajguru22/Aegis.git
 cd aegis
 npm install
 AEGIS_DEMO_MODE=true npm start

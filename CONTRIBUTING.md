@@ -3,7 +3,7 @@
 ## Setup
 
 ```bash
-git clone https://github.com/AryanRajguru22/aegis.git
+git clone https://github.com/AryanRajguru22/Aegis.git
 cd aegis
 npm install
 AEGIS_DEMO_MODE=true npm start
