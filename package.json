@@ -8,18 +8,19 @@
   },
   "scripts": {
     "build": "tsc",
-    "start": "npm run build && node --experimental-wasm-modules dist/api/main.js",
+    "start": "npm run build && node --env-file-if-exists=.env --experimental-wasm-modules dist/api/main.js",
     "test:capability": "npm run build && node --experimental-wasm-modules --test dist/capability/__tests__/*.test.js",
     "test:state": "npm run build && node --experimental-wasm-modules --test dist/state/__tests__/*.test.js",
-    "test:risk": "npm run build && node --experimental-wasm-modules --test dist/risk/__tests__/risk-core.test.js",
-    "test:risk:live": "npm run build && node --experimental-wasm-modules --test dist/risk/__tests__/anthropic-judge.live.test.js",
+    "test:risk": "npm run build && node --experimental-wasm-modules --test dist/risk/__tests__/risk-core.test.js dist/risk/__tests__/gemini-judge.test.js",
+    "test:risk:live": "npm run build && node --env-file-if-exists=.env --experimental-wasm-modules --test dist/risk/__tests__/anthropic-judge.live.test.js",
+    "test:risk:live:gemini": "npm run build && node --env-file-if-exists=.env --experimental-wasm-modules --test dist/risk/__tests__/gemini-judge.live.test.js",
     "test:decision": "npm run build && node --experimental-wasm-modules --test dist/decision/__tests__/*.test.js",
     "test:rails": "npm run build && node --experimental-wasm-modules --test dist/rails/__tests__/mock-x402-rail.test.js dist/rails/__tests__/stripe-rail.test.js",
-    "test:rails:live": "npm run build && node --experimental-wasm-modules --test dist/rails/__tests__/stripe-rail.live.test.js",
+    "test:rails:live": "npm run build && node --env-file-if-exists=.env --experimental-wasm-modules --test dist/rails/__tests__/stripe-rail.live.test.js",
     "test:execution": "npm run build && node --experimental-wasm-modules --test dist/execution/__tests__/*.test.js",
     "test:api": "npm run build && node --experimental-wasm-modules --test dist/api/__tests__/*.test.js",
     "test:mission": "npm run build && node --experimental-wasm-modules --test dist/mission/__tests__/*.test.js",
-    "test": "npm run build && node --experimental-wasm-modules --test --test-reporter=spec dist/capability/__tests__/*.test.js dist/state/__tests__/*.test.js dist/risk/__tests__/risk-core.test.js dist/decision/__tests__/*.test.js dist/rails/__tests__/mock-x402-rail.test.js dist/rails/__tests__/stripe-rail.test.js dist/execution/__tests__/*.test.js dist/api/__tests__/*.test.js dist/mission/__tests__/*.test.js",
+    "test": "npm run build && node --experimental-wasm-modules --test --test-reporter=spec dist/capability/__tests__/*.test.js dist/state/__tests__/*.test.js dist/risk/__tests__/risk-core.test.js dist/risk/__tests__/gemini-judge.test.js dist/decision/__tests__/*.test.js dist/rails/__tests__/mock-x402-rail.test.js dist/rails/__tests__/stripe-rail.test.js dist/execution/__tests__/*.test.js dist/api/__tests__/*.test.js dist/mission/__tests__/*.test.js",
     "build:verifier": "tsc -p verifier/tsconfig.json",
     "test:verifier": "npm run build:verifier && node --test --test-reporter=spec verifier/dist/__tests__/*.test.js"
   },
@@ -33,6 +34,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.120.0",
     "@biscuit-auth/biscuit-wasm": "^0.6.0",
+    "@google/genai": "^2.21.0",
     "express": "^5.2.1",
     "stripe": "^22.5.0"
   },

@@ -53,7 +53,8 @@ function buildPrompt(input: IntentJudgeInput): string {
  */
 export class AnthropicIntentJudge implements IntentJudge {
   private readonly client: Anthropic;
-  private readonly model: string;
+  readonly provider = "anthropic";
+  readonly model: string;
 
   constructor(opts: { apiKey?: string; model?: string } = {}) {
     const apiKey = opts.apiKey ?? process.env.ANTHROPIC_API_KEY;

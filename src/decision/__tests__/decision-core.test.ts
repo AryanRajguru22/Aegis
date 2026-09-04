@@ -363,6 +363,7 @@ describe("safeJudge in isolation", () => {
   test("wraps a well-behaved judge's result through unchanged", async () => {
     const judge = new ScriptedIntentJudge(() => ({ verdict: "consistent", rationale: "ok" }));
     const result = await safeJudge(judge, { delegatedGoal: "g", transaction: { amountMinorUnits: 1, currency: "USD", category: "c", rail: "r", purpose: "p" } });
-    assert.deepEqual(result, { verdict: "consistent", rationale: "ok" });
+    assert.equal(result.verdict, "consistent");
+    assert.equal(result.rationale, "ok");
   });
 });
