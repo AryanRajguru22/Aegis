@@ -17,7 +17,18 @@ export function createLedgerRouter(deps: AppDependencies, requirePrincipal: Requ
       entries = deps.ledger.listByPrincipal(principalId);
     }
 
-    res.status(200).json({ entries, chainValid: deps.ledger.verifyChain().valid });
+    // brokenAtSeq/reason are deterministic, non-sensitive facts about the ledger's own
+    // structure (which sequence number's link/hash/signature failed, and which of
+    // those three failed) — safe to expose, and exactly what a truthful "TAMPERED"
+    // state needs to point at. Never populated when valid — see ChainVerification's
+    // own contract (src/state/ledger.ts).
+    const verification = deps.ledger.verifyChain();
+    res.status(200).json({
+      entries,
+      chainValid: verification.valid,
+      brokenAtSeq: verification.brokenAtSeq ?? null,
+      reason: verification.reason ?? null,
+    });
   });
 
   return router;

@@ -30,11 +30,20 @@ export function createApp(deps: AppDependencies): Express {
   app.use(express.static(path.join(import.meta.dirname, "../../public")));
 
   // Unauthenticated by design: this reveals only a server-wide config flag (whether
-  // this instance was started with AEGIS_DEMO_MODE=true — see src/api/demoMode.ts),
-  // never anything about a specific principal/agent/account, so it needs no auth
-  // boundary — the dashboard fetches it before sign-in to show its demo-mode banner.
+  // this instance was started with AEGIS_DEMO_MODE=true — see src/api/demoMode.ts) and
+  // which AI risk provider this process is configured to use — never anything about a
+  // specific principal/agent/account, so it needs no auth boundary — the dashboard
+  // fetches it before sign-in to show its demo-mode and AI-provenance banners.
+  // aiProvider/aiModel are read directly off the already-constructed deps.intentJudge
+  // instance (see risk/types.ts's IntentJudge.provider/.model, set truthfully by each
+  // of the three real implementations) — never a second, independently-tracked value
+  // that could drift from what actually judges each transaction.
   app.get("/demo-mode", (_req, res) => {
-    res.status(200).json({ demoMode: Boolean(deps.demoMode) });
+    res.status(200).json({
+      demoMode: Boolean(deps.demoMode),
+      aiProvider: deps.intentJudge.provider ?? "unknown",
+      aiModel: deps.intentJudge.model,
+    });
   });
 
   const requirePrincipal = requirePrincipalAuth(deps.principals);

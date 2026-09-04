@@ -60,6 +60,50 @@ describe("POST /principals", () => {
   });
 });
 
+describe("GET /principals/me — the authoritative 'who does this key belong to' check", () => {
+  test("a valid key returns exactly the principalId it was issued to, derived from the key itself", async () => {
+    const { app } = buildHarness();
+    const apiKey = await createPrincipal(app, "acme-corp");
+    const res = await request(app).get("/principals/me").set("Authorization", `Bearer ${apiKey}`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body, { principalId: "acme-corp" });
+  });
+
+  test("the returned identity is never influenced by anything the client claims — only two distinct principals' real keys ever return their own, different identities", async () => {
+    const { app } = buildHarness();
+    const keyA = await createPrincipal(app, "principal-a");
+    const keyB = await createPrincipal(app, "principal-b");
+
+    const resA = await request(app).get("/principals/me").set("Authorization", `Bearer ${keyA}`);
+    const resB = await request(app).get("/principals/me").set("Authorization", `Bearer ${keyB}`);
+
+    assert.equal(resA.body.principalId, "principal-a");
+    assert.equal(resB.body.principalId, "principal-b");
+    assert.notEqual(resA.body.principalId, resB.body.principalId);
+  });
+
+  test("an invalid/unrecognized API key is rejected with 401, never a fabricated identity", async () => {
+    const { app } = buildHarness();
+    const res = await request(app).get("/principals/me").set("Authorization", "Bearer not-a-real-key");
+    assert.equal(res.status, 401);
+    assert.equal("principalId" in res.body, false);
+  });
+
+  test("no Authorization header at all is rejected with 401", async () => {
+    const { app } = buildHarness();
+    const res = await request(app).get("/principals/me");
+    assert.equal(res.status, 401);
+  });
+
+  test("works correctly for a principal with zero agents — the gap the old GET /agents[0]-derived identity check could not cover", async () => {
+    const { app } = buildHarness();
+    const apiKey = await createPrincipal(app, "brand-new-principal-no-agents-yet");
+    const res = await request(app).get("/principals/me").set("Authorization", `Bearer ${apiKey}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.principalId, "brand-new-principal-no-agents-yet");
+  });
+});
+
 describe("principal-authenticated endpoints — authorization", () => {
   test("POST /agents with no Authorization header is rejected", async () => {
     const { app } = buildHarness();
