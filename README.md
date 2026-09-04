@@ -1,8 +1,12 @@
-# Aegis
+# AEGIS
 
-**A trust and authorization control plane for AI agents that spend money.**
+### Trust Mesh Console
 
-Aegis sits between an autonomous agent and real money. It answers one question that
+**Bounded. Revocable. Verifiable.**
+
+A trust-control architecture for autonomous agents operating with constrained
+financial authority. Aegis sits between an autonomous agent and real money. It
+answers one question that
 almost nobody else in this space answers: not "was this one transaction approved,"
 but *should this agent, given everything it has already done and everything it was
 actually delegated to do, be allowed to do this — right now.*
@@ -134,48 +138,53 @@ demonstration infrastructure — not a fallback or a compromise. It swaps exactl
 things behind their existing interfaces: the risk judge becomes a fixed, labeled
 deterministic stand-in (never a real AI evaluation), and the only payment rail
 registered is a self-built mock (`mock_x402`) — Stripe is never reachable in this
-mode regardless of what's in the environment. A persistent on-screen banner discloses
-this the entire time. Everything else — capability math, attenuation, revocation,
-mission budgets, atomic reservation, the ledger, the verifier — is the real,
-unmodified production code path, running with zero external accounts or API keys.
+mode regardless of what's in the environment. Every decision inspector shows exactly
+which judge produced the verdict, in its own rationale text, so this is never disclosed
+only once and then hidden — it's visible at the point of every decision. Everything
+else — capability math, attenuation, revocation, mission budgets, atomic reservation,
+the ledger, the verifier — is the real, unmodified production code path, running with
+zero external accounts or API keys. See [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md)
+§6 for exactly what this does and doesn't prove.
 
 ---
 
 ## Quickstart
 
 ```bash
-git clone <this repo>
+git clone https://github.com/AryanRajguru22/aegis.git
 cd aegis
 npm install
 AEGIS_DEMO_MODE=true npm start
 ```
 
 Open **http://localhost:8787**. No `ANTHROPIC_API_KEY` or `STRIPE_SECRET_KEY` is
-required or read in this mode. The server prints a demo-mode banner and its ledger's
-**public** verification key on startup — copy that key if you intend to run the
-independent verifier later.
+required or read in this mode. The server's terminal output prints a demo-mode banner
+and its ledger's **public** verification key on startup — copy that key if you intend
+to run the independent verifier later.
 
 ## Using the dashboard
 
-1. Create a principal (sign-in screen) — this issues your API key, stored locally.
-2. Create an agent: give it a delegated goal, a max amount, currency, allowed
-   categories, allowed rails, and an expiry.
-3. Select the agent — the **Authority Flow** panel renders the live chain from
-   principal down to the selected agent, and updates again as you attenuate
-   further sub-agents, so a narrowing (never widening) chain of authority is
-   something you can watch happen, not just read about.
-4. Create a mission against the selected agent (a bounded goal + its own,
-   narrower budget) from the missions panel, then select it — its remaining
-   budget is shown as a live, large-type figure that updates as transactions
-   settle against it.
-5. Submit a transaction against the mission and watch the live decision/execution
-   feed and the hash-chained ledger view update.
+The dashboard is a persistent-shell single-page app with six workspaces, navigated
+from the top bar with no page reload — each has its own full-bleed cinematic
+background and, once signed in, all six read and write the same real API:
+
+| Workspace | What it's for |
+|---|---|
+| **Overview** | The thesis at a glance — current authority, mission, budget, last decision, and ledger status, each linking straight to its own workspace |
+| **Authority** | Create a root agent, then select and **Attenuate** it to mint a narrower sub-agent — the live chain diagram (`Root → Delegated → Attenuated → Mission bound`) updates as you go |
+| **Missions** | Bind a bounded objective (goal + its own, narrower budget) to a selected agent; Mission Detail shows live remaining budget as transactions settle against it |
+| **Transactions** | Submit a transaction against the selected agent (optionally scoped to a mission) and watch the full pipeline resolve to `ALLOW`, `DENY`, or `ESCALATE`, stage by stage |
+| **Security** | Demo-mode-only — the concurrent-budget-race and revocation scenarios below |
+| **Evidence** | The live hash-chained ledger, a one-click integrity check, a one-click tamper (demo-mode only), and the independent verifier's own instructions |
+
+For a scripted, rehearsed walkthrough of all six with exact click targets, see
+[`docs/DEMO.md`](docs/DEMO.md).
 
 ## Running the attack theatre
 
-The dashboard's demo-mode-only panel (visible once signed in with
-`AEGIS_DEMO_MODE=true`) runs three live scenarios against the real API — nothing is
-scripted or fabricated:
+The Security workspace (visible once signed in with `AEGIS_DEMO_MODE=true`) runs two
+live scenarios against the real API — nothing is scripted or fabricated — and the
+Evidence workspace runs a third:
 
 - **Atomic budget attack** — fires many concurrent transaction attempts against one
   mission's budget, shows the running allow/deny counters, then independently
@@ -202,6 +211,16 @@ node verifier/dist/cli.js ledger-export.json
 
 `publicKeyHex` is printed in the server's own startup log. Full details, expected
 output, and a tamper walkthrough are in [`verifier/README.md`](verifier/README.md).
+
+## Deployment
+
+[`render.yaml`](render.yaml) is a Render Blueprint — build, start command, a
+persistent disk for the SQLite database, and a health check, all pointed at the same
+unmodified application described above (`AEGIS_DEMO_MODE=true`, no code changes for
+deployment). It has been verified locally (built, started with the exact production
+start command, and checked against a simulated persistent-disk path and a custom
+`PORT`) but **has not been deployed to a live public URL** — nothing here should be
+read as a running, hosted instance existing right now.
 
 ---
 
@@ -241,9 +260,10 @@ npm run test:verifier # verifier suite (58)
   by the running process.
 - Idempotency and mission-reservation state survive a hard process restart without
   risking a duplicate execution.
-- See [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for the full threat-by-threat
-  breakdown, including citations to real-world prompt-injection research this design
-  responds to.
+- See [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) for what the current code
+  guarantees, and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for the full
+  threat-by-threat breakdown, including citations to real-world prompt-injection
+  research this design responds to.
 
 ## Honest limitations
 
@@ -278,34 +298,43 @@ src/
   state/        SQLite persistence, the hash-chained/signed ledger, crypto primitives
   api/          Express routes, auth, idempotency, demo-mode wiring
 verifier/       standalone, offline, independent ledger verifier (see its own README)
-public/         the dashboard (vanilla HTML/CSS/JS, no framework, no UI library)
-docs/           architecture, threat model, market research, product vision
+public/         the six-workspace dashboard (vanilla HTML/CSS/JS, no framework)
+  assets/       per-workspace background photographs
+docs/           architecture, security model, testing, demo script, threat model,
+                market research, product vision
+render.yaml     Render Blueprint (build/start/disk/health-check) — see Deployment above
+.env.example    every environment variable the app actually reads, documented
 ```
 
 ## Documentation index
 
 | Doc | What it covers |
 |---|---|
+| [`docs/DEMO.md`](docs/DEMO.md) | A rehearsed 7-minute (and 2-minute) demo script, with exact click targets and backup paths |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The current implementation, grounded in the actual source tree — endpoints, pipeline stages, persistence, deployment |
+| [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) | What the running code actually guarantees today, and where those guarantees stop |
+| [`docs/TESTING.md`](docs/TESTING.md) | Test commands, what each category proves, and — just as important — what it doesn't |
 | [`docs/PRODUCT_VISION.md`](docs/PRODUCT_VISION.md) | The problem definition and what Aegis is actually building |
 | [`docs/MARKET_AND_COMPETITION.md`](docs/MARKET_AND_COMPETITION.md) | The competitive landscape, read first before any differentiation claim |
 | [`docs/DIFFERENTIATION.md`](docs/DIFFERENTIATION.md) | The precise, defended differentiation thesis |
-| [`docs/SYSTEM_ARCHITECTURE.md`](docs/SYSTEM_ARCHITECTURE.md) | Component overview and transaction lifecycle |
+| [`docs/SYSTEM_ARCHITECTURE.md`](docs/SYSTEM_ARCHITECTURE.md) | The broader design vision and transaction-lifecycle narrative this project scoped down from — see `docs/ARCHITECTURE.md` for what's actually built |
 | [`docs/TRUST_MODEL.md`](docs/TRUST_MODEL.md) | Governing trust principles |
 | [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) | Threats, mitigations, and real-world grounding |
 | [`docs/MVP_SCOPE.md`](docs/MVP_SCOPE.md) | What was scoped in/out and why |
 | [`docs/AUTONOMY_MODEL.md`](docs/AUTONOMY_MODEL.md) | ⚠️ **Design specification only — nothing in this document is implemented.** Not evidence of a shipped capability. |
 | [`verifier/README.md`](verifier/README.md) | The independent verifier: what it proves, what it refuses to trust, how to run it |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Local setup, workflow, and PR expectations |
 
 ## Screenshots
 
-Real, browser-captured screenshots from a live demo-mode run — not staged or
-generated. The two verifier screenshots are the actual terminal output of
+Real, browser-captured screenshots of the live six-workspace dashboard in demo mode —
+not staged or generated. The two verifier screenshots are the actual terminal output of
 `node verifier/dist/cli.js`, run against a genuine untampered export and a
 genuinely tampered one, rendered for readability (same content, same exit codes:
 `0` and `1`).
 
 | | |
 |---|---|
-| ![Dashboard overview](docs/screenshots/dashboard-overview.png) Dashboard overview | ![Authority Flow and live mission budget](docs/screenshots/authority-flow-mission-budget.png) Authority Flow + live mission budget |
-| ![Concurrent budget attack](docs/screenshots/concurrent-budget-attack.png) Concurrent budget attack, traced stage by stage | ![Revocation cascade](docs/screenshots/revocation-cascade.png) Revocation cascade, before → after |
-| ![Independent verifier — trusted](docs/screenshots/independent-verifier-pass.png) Independent verifier — genuine ledger, verified | ![Independent verifier — not verified](docs/screenshots/independent-verifier-fail.png) Independent verifier — tampered ledger, caught |
+| ![Overview](docs/screenshots/overview.png) Overview — the thesis, before anything is selected | ![Authority — attenuation narrowing a sub-agent's cap](docs/screenshots/authority-attenuation.png) Authority — a sub-agent's cap narrowed from $2,000 to $800, categories struck through |
+| ![Mission budget, live remaining figure](docs/screenshots/mission-budget.png) Missions — a bounded objective with its own budget, agent, and expiry | ![Transaction decision pipeline, ALLOW](docs/screenshots/transaction-decision-pipeline.png) Transactions — a real ALLOW, traced stage by stage through the pipeline |
+| ![Concurrent budget attack, zero overspend](docs/screenshots/concurrent-budget-attack.png) Security — 20 concurrent attempts against a $2,000 budget, zero overspend | ![Evidence — tamper detected](docs/screenshots/evidence-tamper-detection.png) Evidence — a direct database tamper, caught and named |

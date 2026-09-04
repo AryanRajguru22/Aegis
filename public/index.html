@@ -450,17 +450,6 @@
   a.link { color: var(--accent); cursor: pointer; }
   #ledgerEntries { max-height: 260px; overflow-y: auto; margin-top: 8px; }
 
-  #demoModeBanner {
-    display: none;
-    text-align: center;
-    padding: 6px 14px;
-    background: var(--escalate);
-    color: #1f1706;
-    font-weight: 700;
-    font-size: 12px;
-    letter-spacing: 0.3px;
-  }
-
   #missionList { display: flex; flex-direction: column; gap: 0; max-height: 380px; overflow-y: auto; margin-bottom: 16px; }
   .missionCard {
     border: none; border-left: 2px solid transparent; border-bottom: 1px solid var(--border-soft);
@@ -633,7 +622,6 @@
 </div>
 <div id="bgPulse"></div>
 
-<div id="demoModeBanner"></div>
 <header>
   <div>
     <h1>AEGIS <span>— Trust Mesh Console</span><span class="headerTag">Control Plane</span></h1>
@@ -880,7 +868,7 @@
       <div class="wsHero">
         <h2>Security</h2>
         <div class="chainSequence"><b>Concurrent attack</b><span class="sep">·</span><b>Revocation</b></div>
-        <div class="hint">Every result below comes from real requests against the real, unmodified Aegis pipeline. Nothing here is simulated.</div>
+        <div class="hint">Real requests against the real pipeline — nothing simulated.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about how these results are produced">ⓘ</button><span class="infoPopover" role="tooltip">Every result below comes from real requests against the real, unmodified Aegis pipeline — not a canned recording.</span></span></div>
       </div>
       <section id="demoTheatre">
         <div class="theatreGrid">
@@ -928,7 +916,7 @@
       <div class="wsHero">
         <h2>Evidence</h2>
         <div class="chainSequence"><b>Live ledger</b><span class="sep">→</span><b>Integrity</b><span class="sep">→</span><b>Independent verifier</b></div>
-        <div class="hint">Sequence, hash chain, and signature — checkable without trusting this dashboard, this server, or any Aegis code at all.</div>
+        <div class="hint">Independently checkable — trusts nothing here.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about how the evidence is verified">ⓘ</button><span class="infoPopover" role="tooltip">Sequence, hash chain, and signature — checkable without trusting this dashboard, this server, or any Aegis code at all.</span></span></div>
       </div>
       <div class="evidenceFlow">
         <div class="evidenceStage">

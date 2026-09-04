@@ -1601,29 +1601,25 @@ function boot() {
 // ever runs once a real sign-in has actually happened. This is purely a display flag;
 // it never changes which endpoints the dashboard calls or how a result is interpreted
 // — the server-side judge/rail selection (src/api/demoMode.ts) is what actually makes
-// demo mode a demo, not anything client-side. Also toggles the Step 13 "Attack
-// Theatre" panel — its scenarios talk to real endpoints regardless, but the panel
-// itself is hidden outside demo mode so a production dashboard never shows it.
+// demo mode a demo, not anything client-side. Toggles the Step 13 "Attack Theatre"
+// panel — its scenarios talk to real endpoints regardless, but the panel itself is
+// hidden outside demo mode so a production dashboard never shows it.
 async function checkDemoMode() {
   try {
     const res = await fetch("/demo-mode");
     if (!res.ok) return;
     const body = await res.json();
-    const banner = document.getElementById("demoModeBanner");
     const theatre = document.getElementById("demoTheatre");
     const prodNote = document.getElementById("securityProdNote");
     if (body.demoMode) {
-      banner.textContent = "⚠ LOCAL DEMO MODE — deterministic judge / mock rail — no real money moves";
-      banner.style.display = "block";
       theatre.style.display = "block";
       if (prodNote) prodNote.style.display = "none";
     } else {
-      banner.style.display = "none";
       theatre.style.display = "none";
       if (prodNote) prodNote.style.display = "block";
     }
   } catch {
-    /* non-fatal — the dashboard still works, it just won't show the demo-mode banner/theatre */
+    /* non-fatal — the dashboard still works, it just won't show the demo-mode theatre panel */
   }
 }
 
