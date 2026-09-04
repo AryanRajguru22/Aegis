@@ -7,6 +7,14 @@ const LS_KEYS = {
   principalId: "aegis_principal_id",
   apiKey: "aegis_principal_key",
   tokens: "aegis_agent_tokens", // { [agentId]: capabilityTokenBase64 }
+  // Security Demonstration Lab identity — completely separate from the real signed-in
+  // principal above. Persisted so a page refresh reconnects to the SAME lab principal
+  // (and therefore the same lab ledger entries — see ensureLabIdentity()) rather than
+  // creating a new, empty-looking lab identity on every reload. Cleared and
+  // re-bootstrapped after an explicit /lab/reset (see recoverLab()), since the old
+  // apiKey stops authenticating once the lab's principal store is wiped.
+  labPrincipalId: "aegis_lab_principal_id",
+  labApiKey: "aegis_lab_principal_key",
 };
 
 let state = {
@@ -20,6 +28,28 @@ let state = {
   viewingMission: null, // the full mission object last fetched by viewMissionDetail(), or null — read by renderAuthorityFlow() to extend the flow with the mission's budget, only when it belongs to the active agent.
   activeWorkspace: "Overview",
   lastDecision: null, // { verdict, reason } from the most recent real Simulate/Execute response — read by renderOverview(), never re-derived.
+  lab: { principalId: null, apiKey: null }, // the Security Demonstration Lab's own, separate identity — see ensureLabIdentity() below. Never the same principal/apiKey as the real signed-in session above.
+  // THE single source of truth for whether the real, signed-in session is currently
+  // valid — see validateSession()/handleSessionExpired() below. "checking" (validating
+  // a stored key against the server, or nothing stored yet) | "authenticated" (the
+  // stored apiKey was just confirmed against the server) | "unauthenticated" (no
+  // stored key, or the server just rejected it). A stored localStorage key is NEVER,
+  // by itself, treated as proof of being signed in — see the root-cause bug this
+  // fixes: init() used to call boot() the instant a key merely EXISTED in
+  // localStorage, with no server-side check at all, so a stale key from a previous
+  // server process looked "signed in" right up until the first individual widget
+  // (Overview, Evidence, the Lab) independently discovered otherwise, each in its own
+  // way, at its own time.
+  authStatus: "checking",
+  // THE single source of truth for production ledger integrity — every display of it
+  // (header, Overview, Evidence workspace) reads from this ONE object, updated only by
+  // verifyProductionLedger() below. Never independently re-derived, never scraped from
+  // another element's rendered DOM. status: "checking" (a request is in flight, or none
+  // has completed yet — the honest default; never defaults to "verified") | "verified"
+  // | "tampered" | "error" (the check itself failed — auth, network, etc. — this is
+  // NEVER the same state as "tampered": not knowing is not the same claim as knowing
+  // it's broken). See verifyProductionLedger()'s own doc comment for the full contract.
+  prodLedger: { status: "checking", entries: [], brokenAtSeq: null, reason: null, errorMessage: null },
 };
 
 // ---------- Block 4A: one-time "moment of truth" success pulse ----------
@@ -27,7 +57,7 @@ let state = {
 // on this page load — the pulse (see .integrityBig.pulse in index.html) fires only
 // the first time, never on every re-check/re-run, so it stays a real moment instead
 // of becoming background noise. Denial states get no equivalent animation at all —
-// see checkIntegrity()/launchBudgetAttack() below.
+// see renderProductionLedgerStatus()/launchBudgetAttack() below.
 let integrityPulsedOnce = false;
 let attackZeroOverspendPulsedOnce = false;
 
@@ -125,9 +155,129 @@ async function api(path, { method = "GET", auth, body, headers = {} } = {}) {
   }
   if (!res.ok) {
     const message = (json && json.error) || `HTTP ${res.status}`;
-    throw new Error(message);
+    const err = new Error(message);
+    // Lets callers branch on the real HTTP status (e.g. "was this an auth failure or
+    // something else?") without parsing message text — see describeLedgerError()
+    // below, which is exactly why this exists: an expired/invalid apiKey (401) must
+    // never be displayed or treated the same as a genuine tamper detection.
+    err.status = res.status;
+    throw err;
   }
   return json;
+}
+
+// ---------- session / principal authentication — single source of truth ----------
+// Root-cause fix for a real bug: a stale localStorage apiKey (left over from a
+// previous server process — e.g. after a restart with a fresh/different principal
+// store) used to be treated as "signed in" the instant init() found it in storage, with
+// NO server-side check at all. Every widget that then happened to call the API with
+// that dead key discovered the 401 independently, at its own time, in its own way —
+// Overview silently showed "no agents" (an unhandled rejection, not a shown error),
+// the Lab showed a confusing "sign in again" message it has no UI for, the stream
+// retried forever in silence. state.authStatus (declared with `state` above) is now
+// the ONE place this is ever decided, and validateSession()/handleSessionExpired()
+// are the ONLY functions that ever change it.
+
+/**
+ * The ONLY wrapper that ever authenticates as the real, signed-in principal
+ * (state.apiKey) — every call site that used to pass `auth: state.apiKey` to api()
+ * directly now goes through this instead. On a 401/403 (the stored key genuinely no
+ * longer authenticates — never on a network error, which says nothing about the key's
+ * validity) it calls handleSessionExpired() exactly once, centrally, before re-throwing
+ * so the calling code's own local error handling (e.g. describeLedgerError's "error"
+ * ledger state) still runs too — the two are complementary, not competing: this
+ * updates the GLOBAL "are we signed in at all" state, local handlers still describe
+ * what that specific action couldn't do.
+ */
+async function principalApi(path, opts = {}) {
+  try {
+    return await api(path, { ...opts, auth: state.apiKey });
+  } catch (err) {
+    if (err && (err.status === 401 || err.status === 403)) handleSessionExpired();
+    throw err;
+  }
+}
+
+/**
+ * Discards the stale session (memory + localStorage) and routes the user back to the
+ * existing sign-in screen with a plain-language explanation — never a raw server
+ * error, never a silent failure a user has to discover by poking around DevTools.
+ * Idempotent: safe to call from multiple independent failures in quick succession
+ * (e.g. loadAgents() and loadMissions() both 401 around the same time at boot).
+ */
+function handleSessionExpired() {
+  if (state.authStatus === "unauthenticated") return; // already handled — avoid redundant DOM churn from a second/third concurrent 401
+  localStorage.removeItem(LS_KEYS.principalId);
+  localStorage.removeItem(LS_KEYS.apiKey);
+  state.principalId = null;
+  state.apiKey = null;
+  state.authStatus = "unauthenticated";
+  showAuthScreen("Session expired or invalid. Please sign in again.");
+}
+
+/** Shows the existing sign-in screen (create-principal / use-existing-key — both already fully functional) with a given message, and hides the signed-in shell so no stale dashboard content is left visible underneath. */
+function showAuthScreen(message) {
+  const authScreen = document.getElementById("authScreen");
+  const app = document.getElementById("app");
+  const navBar = document.getElementById("navBar");
+  if (authScreen) authScreen.style.display = "";
+  if (app) app.style.display = "none";
+  if (navBar) navBar.style.display = "none";
+  // Always resets to the sign-in-ready state — never leaves a stale "issued key"
+  // panel showing from an earlier principal creation this same page load (e.g. the
+  // session later expires after the user already created-and-continued past it).
+  document.getElementById("signInForm").style.display = "block";
+  document.getElementById("createPrincipalForm").style.display = "block";
+  document.getElementById("authDivider").style.display = "flex";
+  document.getElementById("issuedKeyPanel").style.display = "none";
+  const errorEl = document.getElementById("signInError");
+  if (errorEl) errorEl.textContent = message || "";
+  const createErrorEl = document.getElementById("createPrincipalError");
+  if (createErrorEl) createErrorEl.textContent = "";
+}
+
+/**
+ * Called once, at page load, BEFORE anything decides whether to show the dashboard or
+ * the sign-in screen — the single gate every other piece of boot logic waits behind.
+ * A stored key is validated against the server (reusing GET /agents — the exact same
+ * principal-authenticated, lightweight check the "use existing key" sign-in form
+ * already relies on, so this introduces no new backend surface) — never assumed valid
+ * merely because localStorage has it. Only a CONFIRMED 401/403 clears the stored key;
+ * a network error leaves it alone (unproven, not disproven) and shows a neutral retry
+ * message on the very same, already-visible sign-in screen instead of guessing.
+ */
+async function validateSession() {
+  const apiKey = localStorage.getItem(LS_KEYS.apiKey);
+  const principalId = localStorage.getItem(LS_KEYS.principalId);
+  if (!apiKey || !principalId) {
+    state.authStatus = "unauthenticated";
+    return;
+  }
+  state.apiKey = apiKey;
+  state.principalId = principalId;
+  state.authStatus = "checking";
+  try {
+    // The same authoritative "who does this key belong to" check the sign-in form
+    // uses (see signInBtn's handler) — confirms the stored key both still
+    // authenticates AND still belongs to the stored principalId, rather than
+    // trusting either half of the pair merely because they were stored together.
+    const res = await api("/principals/me", { auth: apiKey });
+    if (res.principalId !== principalId) {
+      handleSessionExpired();
+      return;
+    }
+    state.authStatus = "authenticated";
+    boot();
+  } catch (err) {
+    if (err && (err.status === 401 || err.status === 403)) {
+      handleSessionExpired();
+    } else {
+      // Could not even confirm — never silently proceed into a half-authenticated
+      // dashboard, and never wipe a key that was never actually disproven.
+      state.authStatus = "checking";
+      showAuthScreen("Could not verify your session — check your connection and try again, or sign in below.");
+    }
+  }
 }
 
 function verdictBadge(verdict) {
@@ -193,21 +343,79 @@ function staggerReveal(elements, stepMs = 150) {
   }
 }
 
+/** ✓/✗/⚠ — one glance at whether a stage passed, failed, or escalated, never a fourth guessed symbol. Purely a rendering of stageStatusClass's own already-real classification, never a second judgment about the verdict. */
+function stageStatusSymbol(cls) {
+  if (cls === "allow") return "✓";
+  if (cls === "deny") return "✗";
+  if (cls === "escalate") return "⚠";
+  return "—";
+}
+
 function pipelineStage(label, statusWord, detailNodes) {
   const cls = stageStatusClass(statusWord);
   const stage = el("div", { class: `stage stage-${cls}` });
   stage.appendChild(
-    el("div", { class: "stageHead" }, [el("span", { class: "stageLabel", text: label }), el("span", { class: `badge ${cls}`, text: statusWord || "—" })])
+    el("div", { class: "stageHead" }, [
+      el("span", { class: "stageLabel", text: label }),
+      el("span", { class: `badge ${cls}`, text: `${stageStatusSymbol(cls)} ${statusWord || "—"}` }),
+    ])
   );
   stage.appendChild(el("div", { class: "stageDetail" }, detailNodes));
   return stage;
 }
 
 // ---------- auth screen ----------
+// Two clearly separate flows: SIGN IN (an existing Principal ID + its API key) and
+// CREATE NEW PRINCIPAL. Both ultimately call the same signIn() — there is exactly one
+// path into an authenticated session, never a second, parallel one.
+
+/**
+ * Verifies a user-typed (Principal ID, API key) PAIR against the server, never
+ * trusting the client's own claim of identity. GET /principals/me
+ * (src/api/routes/principals.ts) derives the real owner directly from the key itself
+ * (a hash lookup — req.principalId, set by requirePrincipalAuth) — this function
+ * simply confirms that server-derived identity matches what the user typed, so a
+ * real key for principal "aryan" typed alongside Principal ID "tyagi" is correctly
+ * treated as a failed sign-in, even though the key itself is genuinely valid for its
+ * real owner.
+ */
+document.getElementById("signInBtn").addEventListener("click", async () => {
+  const principalId = document.getElementById("signInPrincipalId").value.trim();
+  const apiKey = document.getElementById("signInApiKey").value.trim();
+  const errorEl = document.getElementById("signInError");
+  errorEl.textContent = "";
+  if (!principalId) {
+    errorEl.textContent = "Enter your Principal ID.";
+    return;
+  }
+  if (!apiKey) {
+    errorEl.textContent = "Enter your API key.";
+    return;
+  }
+  try {
+    const res = await api("/principals/me", { auth: apiKey });
+    if (res.principalId !== principalId) {
+      // A genuinely valid key, just not the one for the Principal ID the user typed —
+      // a distinct, safe, non-leaking message (never reveals whether "principalId"
+      // itself exists, or who the key actually belongs to).
+      errorEl.textContent = "Principal ID and API key do not match.";
+      return;
+    }
+    signIn(res.principalId, apiKey);
+  } catch (err) {
+    // err.status === 401/403 here means the key itself is not recognized at all —
+    // this specific static message is the one intentionally-safe exception to "never
+    // show raw backend text": it happens to read the same as the server's own 401
+    // message, but is authored here, client-side, independent of whatever the server
+    // actually said (see describeLedgerError()'s doc comment for the same discipline
+    // applied elsewhere in this file).
+    errorEl.textContent = "Invalid API key.";
+  }
+});
 
 document.getElementById("createPrincipalBtn").addEventListener("click", async () => {
   const principalId = document.getElementById("newPrincipalId").value.trim();
-  const errorEl = document.getElementById("authError");
+  const errorEl = document.getElementById("createPrincipalError");
   errorEl.textContent = "";
   if (!principalId) {
     errorEl.textContent = "Enter a principal ID.";
@@ -215,30 +423,41 @@ document.getElementById("createPrincipalBtn").addEventListener("click", async ()
   }
   try {
     const res = await api("/principals", { method: "POST", body: { principalId } });
-    signIn(res.principalId, res.apiKey);
+    showIssuedKey(res.principalId, res.apiKey);
   } catch (err) {
+    // A duplicate principalId (409) surfaces here as a plain, clear message — never
+    // silently or automatically signing the user in as the ALREADY-existing principal
+    // (that would let a Principal ID guess double as an authentication bypass).
     errorEl.textContent = err.message;
   }
 });
 
-document.getElementById("useExistingKeyBtn").addEventListener("click", async () => {
-  const apiKey = document.getElementById("existingApiKey").value.trim();
-  const errorEl = document.getElementById("authError");
-  errorEl.textContent = "";
-  if (!apiKey) {
-    errorEl.textContent = "Paste an API key.";
-    return;
-  }
-  try {
-    // GET /agents both verifies the key and tells us who we are via the returned agents' principalId.
-    const res = await fetch("/agents", { headers: { authorization: `Bearer ${apiKey}` } });
-    if (!res.ok) throw new Error("Invalid API key");
-    const body = await res.json();
-    const principalId = body.agents[0]?.principalId || "(unknown — no agents yet)";
-    signIn(principalId, apiKey);
-  } catch (err) {
-    errorEl.textContent = err.message;
-  }
+/**
+ * Shows the freshly-issued API key exactly once, requiring an explicit "Continue"
+ * click before ever entering the authenticated app — the same real API-key issuance
+ * pattern used elsewhere (e.g. GitHub personal access tokens): the raw key is
+ * returned by the server exactly once, at creation (see PrincipalStore's own doc
+ * comment in src/state/principals.ts), so this is the only moment it can ever be
+ * shown at all. Does not itself call signIn() — that only happens once the user
+ * acknowledges via #issuedKeyContinueBtn below, so a principal is never silently
+ * authenticated as a side effect of merely being created.
+ */
+let pendingIssuedPrincipalId = null;
+let pendingIssuedApiKey = null;
+
+function showIssuedKey(principalId, apiKey) {
+  document.getElementById("signInForm").style.display = "none";
+  document.getElementById("createPrincipalForm").style.display = "none";
+  document.getElementById("authDivider").style.display = "none";
+  document.getElementById("issuedKeyPrincipalId").textContent = principalId;
+  document.getElementById("issuedKeyValue").textContent = apiKey;
+  document.getElementById("issuedKeyPanel").style.display = "block";
+  pendingIssuedPrincipalId = principalId;
+  pendingIssuedApiKey = apiKey;
+}
+
+document.getElementById("issuedKeyContinueBtn").addEventListener("click", () => {
+  signIn(pendingIssuedPrincipalId, pendingIssuedApiKey);
 });
 
 function signIn(principalId, apiKey) {
@@ -246,6 +465,7 @@ function signIn(principalId, apiKey) {
   localStorage.setItem(LS_KEYS.apiKey, apiKey);
   state.principalId = principalId;
   state.apiKey = apiKey;
+  state.authStatus = "authenticated"; // the key was just verified server-side by the caller above (either freshly minted, or confirmed via GET /agents) — never trusted merely because it's about to be stored
   boot();
 }
 
@@ -258,7 +478,7 @@ function signOut() {
 // ---------- agents panel ----------
 
 async function loadAgents() {
-  const res = await api("/agents", { auth: state.apiKey });
+  const res = await principalApi("/agents");
   state.agents = res.agents;
   renderAgentTree();
   populateMissionAgentSelect();
@@ -384,7 +604,7 @@ document.getElementById("createAgentBtn").addEventListener("click", async () => 
 
   try {
     const path = state.attenuateParentId ? `/agents/${state.attenuateParentId}/attenuate` : "/agents";
-    const res = await api(path, { method: "POST", auth: state.apiKey, body: { agentId, delegatedGoal, caveats } });
+    const res = await principalApi(path, { method: "POST", body: { agentId, delegatedGoal, caveats } });
     saveToken(res.agentId, res.token);
     document.getElementById("agentId").value = "";
     document.getElementById("delegatedGoal").value = "";
@@ -401,7 +621,7 @@ document.getElementById("createAgentBtn").addEventListener("click", async () => 
 async function revokeAgent(agentId) {
   if (!confirm(`Revoke "${agentId}"? This cascades to every sub-agent attenuated from it.`)) return;
   try {
-    await api(`/agents/${agentId}/revoke`, { method: "POST", auth: state.apiKey, body: { reason: "Revoked from the Aegis dashboard" } });
+    await principalApi(`/agents/${agentId}/revoke`, { method: "POST", body: { reason: "Revoked from the Aegis dashboard" } });
     await loadAgents();
   } catch (err) {
     alert(err.message);
@@ -568,6 +788,22 @@ function currentTransaction() {
 // submitted (see the click handlers below); for a historical mission entry they come
 // straight from that entry's own ledger data (see historyEventToDecisionBody) — never
 // invented, never re-derived from anything else.
+/**
+ * Where the real pipeline actually stopped — derived entirely from fields the
+ * backend already returned (decision.source, decision.policy.allowed,
+ * decision.risk, decision.verdict, and whether `execution` is present at all),
+ * never a second, independent guess. Mirrors the exact stage ordering
+ * src/decision/decide.ts and src/api/routes/transactions.ts's mission preflight
+ * actually run in: Mission -> Capability & Policy -> Risk -> Decision -> Execution.
+ */
+function decisionStoppedAt(decision) {
+  if (decision.source === "mission") return "MISSION";
+  if (decision.policy && !decision.policy.allowed) return "CAPABILITY & POLICY";
+  if (decision.risk && decision.verdict !== "allow") return "RISK";
+  if (decision.verdict !== "allow") return "DECISION";
+  return null; // nothing stopped it — every stage passed
+}
+
 function renderDecisionResult(container, body, options = {}) {
   container.innerHTML = ""; // clearing only — never used to insert untrusted content
   if (!body) return;
@@ -597,6 +833,7 @@ function renderDecisionResult(container, body, options = {}) {
     pipeline.appendChild(pipelineStage(missionLabel, "deny", [el("span", { text: decision.reason })]));
     container.appendChild(pipeline);
     staggerReveal(pipeline.childNodes);
+    container.appendChild(renderDecisionSummary(decision, undefined));
     return;
   }
 
@@ -614,7 +851,31 @@ function renderDecisionResult(container, body, options = {}) {
 
   if (decision.risk) {
     const { intentJudgment, baselineFlags } = decision.risk;
+    const isUnavailable = intentJudgment.verdict === "unavailable";
     const riskNodes = [el("b", { text: "Intent: ", style: "color:var(--text)" }), document.createTextNode(`${intentJudgment.verdict} — ${intentJudgment.rationale}`)];
+    if (intentJudgment.provider) {
+      const { label } = describeProvider(intentJudgment.provider, intentJudgment.model);
+      riskNodes.push(document.createElement("br"));
+      riskNodes.push(el("b", { text: "Provider: ", style: "color:var(--text)" }));
+      riskNodes.push(
+        document.createTextNode(intentJudgment.reused ? `${label} (reused verified judgment from prior simulation)` : `${label} — fresh call`)
+      );
+      riskNodes.push(document.createElement("br"));
+      riskNodes.push(el("b", { text: "Status: ", style: "color:var(--text)" }));
+      riskNodes.push(document.createTextNode(isUnavailable ? "UNAVAILABLE" : "AVAILABLE"));
+      if (isUnavailable) {
+        riskNodes.push(document.createTextNode(" — Action: Escalated safely for human review."));
+      }
+    }
+    if (intentJudgment.reused) {
+      riskNodes.push(document.createElement("br"));
+      riskNodes.push(
+        el("span", {
+          text: "Reused from the prior Simulate — deterministic authorization checks were re-run fresh for this Execute.",
+          style: "color:var(--text-dim); font-style:italic;",
+        })
+      );
+    }
     if (baselineFlags.length) {
       riskNodes.push(document.createElement("br"));
       riskNodes.push(el("b", { text: "Behavioral: ", style: "color:var(--text)" }));
@@ -636,6 +897,32 @@ function renderDecisionResult(container, body, options = {}) {
   // they visually fade in, ~150ms apart, so a viewer watches the request travel
   // through the pipeline instead of seeing a wall of text appear at once.
   staggerReveal(pipeline.childNodes);
+  container.appendChild(renderDecisionSummary(decision, execution));
+}
+
+/**
+ * "STOPPED AT" / "EXECUTION" / "FINAL" — the one-glance verdict a presenter reads
+ * without having to parse every stage above. Every value here is a direct read of
+ * real response fields (decisionStoppedAt's own real derivation, and whether
+ * `execution` is actually present in the response) — never a fabricated or
+ * hardcoded claim. For an approval, stoppedAt is null and this renders nothing about
+ * "stopped at" at all, since nothing did.
+ */
+function renderDecisionSummary(decision, execution) {
+  const stoppedAt = decisionStoppedAt(decision);
+  const cls = stageStatusClass(decision.verdict);
+  const box = el("div", { class: `decisionSummary decisionSummary-${cls}` });
+  if (stoppedAt) {
+    box.appendChild(el("div", { class: "decisionSummaryLine" }, [el("b", { text: "STOPPED AT: " }), document.createTextNode(stoppedAt)]));
+  }
+  box.appendChild(
+    el("div", { class: "decisionSummaryLine" }, [
+      el("b", { text: "EXECUTION: " }),
+      document.createTextNode(execution ? (execution.success ? "SETTLED" : "ATTEMPTED — FAILED") : "NOT ATTEMPTED"),
+    ])
+  );
+  box.appendChild(el("div", { class: "decisionSummaryFinal" }, [el("b", { text: "FINAL: " }), document.createTextNode(decision.verdict.toUpperCase())]));
+  return box;
 }
 
 /** The one place an error message reaches the DOM — always as literal text, never markup, since err.message can carry API-echoed user input (e.g. a rejected agentId). */
@@ -663,6 +950,144 @@ function selectedMissionId() {
 // the race found during Step 6's real-browser verification, without touching api(),
 // renderDecisionResult(), renderError(), or anything server-side.
 let latestResultRequestId = 0;
+
+// ---------- demo scenario — one click, real backend, never mocked ----------
+// Every step below is the SAME real API call a presenter would otherwise make by
+// hand (create agent, create mission, execute transaction) — nothing here is a
+// canned/fabricated response. Exists purely so a live demo can jump straight to a
+// meaningful state (one settled transaction, one denied transaction, both visible in
+// the real Decision Inspector and the real ledger) instead of building it up live,
+// click by click, every time.
+document.getElementById("loadDemoScenarioBtn").addEventListener("click", async () => {
+  const btn = document.getElementById("loadDemoScenarioBtn");
+  const statusEl = document.getElementById("demoScenarioStatus");
+  btn.disabled = true;
+  try {
+    await loadDemoScenario(statusEl);
+  } catch (err) {
+    statusEl.textContent = `Demo scenario failed: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function loadDemoScenario(statusEl) {
+  const agentCaveats = {
+    maxAmountMinorUnits: 200_000, // $2,000
+    currency: "USD",
+    categories: ["flights", "hotels", "software"],
+    rails: ["stripe_test", "mock_x402"],
+    expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+
+  statusEl.textContent = "Creating agent-flights…";
+  let agentId = "agent-flights";
+  let token = loadTokens()[agentId];
+  if (!token) {
+    try {
+      const res = await principalApi("/agents", {
+        method: "POST",
+        body: { agentId, delegatedGoal: "Book flights, hotels, and software subscriptions for the team, within budget.", caveats: agentCaveats },
+      });
+      token = res.token;
+      saveToken(agentId, token);
+    } catch (err) {
+      if (err.status !== 409) throw err;
+      // agent-flights already exists under this principal (e.g. a previous demo run
+      // in a different browser) — its one-time capability token is gone for good
+      // (see AgentStore's own design: a token is shown exactly once, never
+      // re-exposed). Falling back to a uniquely-suffixed identity is the only real
+      // option — never fabricate a token for an agent we don't actually hold one for.
+      agentId = `agent-flights-${Date.now().toString(36)}`;
+      statusEl.textContent = `"agent-flights" already exists here — creating "${agentId}" instead…`;
+      const res = await principalApi("/agents", {
+        method: "POST",
+        body: { agentId, delegatedGoal: "Book flights, hotels, and software subscriptions for the team, within budget.", caveats: agentCaveats },
+      });
+      token = res.token;
+      saveToken(agentId, token);
+    }
+  }
+  await loadAgents();
+  state.activeAgentId = agentId;
+  renderAgentTree();
+
+  // Always a FRESH mission, never reused — guarantees the $380-approved/
+  // $2,400-denied pair below behaves identically no matter how many times this
+  // button has already been clicked (a reused mission would eventually accumulate
+  // enough real settled spend from earlier demo runs to make the $380 leg deny too).
+  const missionId = `mission-credits-${Date.now().toString(36)}`;
+  statusEl.textContent = `Agent "${agentId}" ready. Creating mission "${missionId}"…`;
+  await principalApi("/missions", {
+    method: "POST",
+    body: {
+      missionId,
+      agentId,
+      goal: "Book approved flights with acme-airlines, staying within a $2,000 budget.",
+      budgetMinorUnits: 200_000, // $2,000
+      currency: "USD",
+      allowedCategories: ["flights"],
+      approvedCounterparties: ["acme-airlines"],
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    },
+  });
+  await loadMissions();
+  state.viewingMissionId = missionId;
+
+  // mock_x402, not stripe_test, for the actual demo transactions specifically — the
+  // agent's own caveats still grant BOTH rails, exactly as requested, but stripe_test
+  // is never registered at all in AEGIS_DEMO_MODE (see selectRailAdapters in
+  // src/api/demoMode.ts — a deliberate, existing guarantee: no real/test Stripe key
+  // is ever touched in demo mode, regardless of STRIPE_SECRET_KEY). Submitting
+  // stripe_test here would still correctly get decision.verdict "allow" (rail
+  // registration is an execution-layer concern, not a policy one) but then FAIL at
+  // settlement with "No rail adapter registered" — confusing for a one-click demo
+  // whose whole point is a clean approval. mock_x402 is registered in every server
+  // configuration, demo or production, so this is the reliable choice, not a mocked
+  // shortcut — it is still the exact real rail adapter, real settlement, real ledger
+  // write every other mock_x402 transaction in this app already goes through.
+  statusEl.textContent = "Running approved transaction ($380, flights, acme-airlines, mock_x402)…";
+  const approvedBody = {
+    transaction: { amountMinorUnits: 38_000, currency: "USD", category: "flights", rail: "mock_x402", purpose: "Round-trip flight for the Q3 vendor conference" },
+    counterparty: "acme-airlines",
+    missionId,
+  };
+  const approved = await api("/transactions", { method: "POST", auth: token, headers: { "idempotency-key": crypto.randomUUID() }, body: approvedBody });
+
+  statusEl.textContent = "Running denied transaction ($2,400 — exceeds the mission's $2,000 budget)…";
+  const deniedBody = {
+    transaction: { amountMinorUnits: 240_000, currency: "USD", category: "flights", rail: "mock_x402", purpose: "Large flight block booking" },
+    counterparty: "acme-airlines",
+    missionId,
+  };
+  const denied = await api("/transactions", { method: "POST", auth: token, headers: { "idempotency-key": crypto.randomUUID() }, body: deniedBody });
+
+  await loadMissions();
+  verifyProductionLedger();
+
+  statusEl.textContent =
+    `Ready — agent "${agentId}", mission "${missionId}". Approved: ${approved.decision.verdict.toUpperCase()} ($380). ` +
+    `Denied: ${denied.decision.verdict.toUpperCase()} ($2,400, exceeds budget). Showing the denial below.`;
+
+  // Leaves the transaction FORM populated with the denied attempt's exact inputs —
+  // a presenter can immediately click Simulate/Execute again live, or switch the
+  // amount to $380 to show the approval path interactively, using the SAME real form
+  // every other transaction on this page uses.
+  document.getElementById("txAmount").value = "2400";
+  document.getElementById("txCurrency").value = "USD";
+  document.getElementById("txCategory").value = "flights";
+  document.getElementById("txRail").value = "mock_x402";
+  document.getElementById("txCounterparty").value = "acme-airlines";
+  document.getElementById("txPurpose").value = deniedBody.transaction.purpose;
+  populateTxMissionSelect();
+  document.getElementById("txMission").value = missionId;
+
+  state.lastDecision = { verdict: denied.decision.verdict, reason: denied.decision.reason };
+  showWorkspace("transactions");
+  const resultEl = document.getElementById("result");
+  const txSummary = { amountMinorUnits: 240_000, currency: "USD", category: "flights", counterparty: "acme-airlines" };
+  renderDecisionResult(resultEl, denied, { missionUsed: true, missionId, txSummary });
+}
 
 document.getElementById("simulateBtn").addEventListener("click", async () => {
   const requestId = ++latestResultRequestId;
@@ -725,7 +1150,7 @@ document.getElementById("executeBtn").addEventListener("click", async () => {
     pulseAtmosphere(reach.kind);
     envSignalTo(reach.fraction, reach.kind);
     if (missionId) await loadMissions(); // refresh budget/spent/reserved figures after a mission-scoped attempt — always reflects real server state, independent of #result staleness
-    refreshLedger(); // keeps the shell's status chip and the Evidence workspace honest after a real state change, not just after boot or an explicit Refresh click
+    verifyProductionLedger(); // keeps the shell's status chip and the Evidence workspace honest after a real state change, not just after boot or an explicit Refresh click
   } catch (err) {
     if (requestId !== latestResultRequestId) return; // stale — a newer click already owns the panel
     renderError(resultEl, err.message);
@@ -741,7 +1166,7 @@ function statusBadgeClass(status) {
 }
 
 async function loadMissions() {
-  const res = await api("/missions", { auth: state.apiKey });
+  const res = await principalApi("/missions");
   state.missions = res.missions;
   renderMissionList();
   populateTxMissionSelect();
@@ -848,9 +1273,8 @@ document.getElementById("createMissionBtn").addEventListener("click", async () =
   }
 
   try {
-    await api("/missions", {
+    await principalApi("/missions", {
       method: "POST",
-      auth: state.apiKey,
       body: {
         missionId,
         agentId,
@@ -875,7 +1299,7 @@ document.getElementById("createMissionBtn").addEventListener("click", async () =
 async function cancelMission(missionId) {
   if (!confirm(`Cancel mission "${missionId}"? No further transactions will be permitted under it.`)) return;
   try {
-    await api(`/missions/${encodeURIComponent(missionId)}/cancel`, { method: "POST", auth: state.apiKey });
+    await principalApi(`/missions/${encodeURIComponent(missionId)}/cancel`, { method: "POST" });
     await loadMissions();
   } catch (err) {
     alert(err.message);
@@ -965,8 +1389,8 @@ async function viewMissionDetail(missionId) {
   container.innerHTML = "";
   container.appendChild(el("div", { class: "hint", text: "Loading…" }));
   try {
-    const mission = await api(`/missions/${encodeURIComponent(missionId)}`, { auth: state.apiKey });
-    const ledgerRes = await api(`/ledger?agentId=${encodeURIComponent(mission.agentId)}`, { auth: state.apiKey });
+    const mission = await principalApi(`/missions/${encodeURIComponent(missionId)}`);
+    const ledgerRes = await principalApi(`/ledger?agentId=${encodeURIComponent(mission.agentId)}`);
     renderMissionDetail(mission, ledgerRes.entries);
     state.viewingMission = mission;
     renderAuthorityFlow();
@@ -1112,6 +1536,15 @@ async function startStream() {
   while (true) {
     try {
       const res = await fetch("/stream", { headers: { authorization: `Bearer ${state.apiKey}` } });
+      if (res.status === 401 || res.status === 403) {
+        // The session died (same stale-key scenario as every other principal-
+        // authenticated call — see principalApi()) — stop retrying silently forever
+        // against a key that will never work again; hand off to the same central,
+        // user-visible recovery every other widget uses. boot() (called again once
+        // the user signs back in) starts a fresh startStream() of its own.
+        handleSessionExpired();
+        return;
+      }
       if (!res.ok || !res.body) throw new Error("stream connection failed");
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -1138,21 +1571,130 @@ async function startStream() {
   }
 }
 
-// ---------- ledger ----------
+// ---------- ledger — single source of truth for PRODUCTION integrity ----------
+// Root-cause fix for a real, observed bug: the header, Overview, and Evidence
+// workspace used to each derive their own ledger status independently (two separate
+// GET /ledger calls from two separate functions, plus Overview literally SCRAPING
+// Evidence's own rendered DOM/className as its "state source") — which could disagree
+// with each other, and which conflated "the check itself failed" (a stale/expired
+// apiKey, a network error) with "the check succeeded and found tampering", showing the
+// exact same "Ledger tampered" text for both. There is now exactly ONE function that
+// ever calls GET /ledger for production, exactly ONE state object it writes to
+// (state.prodLedger), and exactly ONE render function every display reads from.
 
-document.getElementById("refreshLedgerBtn").addEventListener("click", refreshLedger);
+document.getElementById("refreshLedgerBtn").addEventListener("click", verifyProductionLedger);
 
-async function refreshLedger() {
-  const statusEl = document.getElementById("chainStatus");
-  const listEl = document.getElementById("ledgerEntries");
+/**
+ * Maps a thrown api() error to a safe, static, category-based message — never the raw
+ * server/network error text. Mirrors the same discipline already established for AI
+ * provider failures (src/decision/decide.ts's SAFE_UNAVAILABLE_MESSAGES) applied here
+ * to ledger-verification failures: an expired/invalid principal apiKey (401) must
+ * never be displayed as if it were a finding about the ledger's integrity, and no
+ * internal error string is ever shown verbatim.
+ */
+function describeLedgerError(err) {
+  if (err && err.status === 401) return "Sign-in required — your session key is no longer valid. Sign in again to verify.";
+  if (err && err.status === 403) return "Not authorized to view this ledger.";
+  return "Could not reach the server to verify — check your connection and try again.";
+}
+
+/**
+ * THE only function that ever calls GET /ledger for the production ledger. Always
+ * transitions state.prodLedger through one of exactly four states — never a fifth,
+ * ad-hoc one — and always calls renderProductionLedgerStatus() immediately after, so
+ * every display target updates atomically, together, from the same fetch result.
+ * A request that fails (auth, network, anything) becomes "error", NEVER "tampered" —
+ * "tampered" is a positive claim that can only come from a real, completed chain
+ * verification that found a broken link/hash/signature.
+ */
+async function verifyProductionLedger() {
+  state.prodLedger = { ...state.prodLedger, status: "checking" };
+  renderProductionLedgerStatus();
   try {
-    const res = await api("/ledger", { auth: state.apiKey });
-    statusEl.className = res.chainValid ? "valid" : "invalid";
-    statusEl.textContent = res.chainValid
-      ? `✓ Verified — ${res.entries.length} entries, hash-chain intact`
-      : `✗ TAMPERED — hash-chain verification failed`;
+    const res = await principalApi("/ledger");
+    state.prodLedger = {
+      status: res.chainValid ? "verified" : "tampered",
+      entries: res.entries,
+      brokenAtSeq: res.chainValid ? null : res.brokenAtSeq ?? null,
+      reason: res.chainValid ? null : res.reason ?? null,
+      errorMessage: null,
+    };
+  } catch (err) {
+    state.prodLedger = { status: "error", entries: state.prodLedger.entries, brokenAtSeq: null, reason: null, errorMessage: describeLedgerError(err) };
+  }
+  renderProductionLedgerStatus();
+  return state.prodLedger;
+}
+
+/**
+ * Paints state.prodLedger into every display of production ledger integrity — header
+ * chip, Overview fact, and the Evidence workspace's live-ledger line, big banner, and
+ * entries list — all in one place, all from the same read. No display here ever
+ * re-fetches, re-derives, or reads another display's rendered DOM as its own input.
+ */
+function renderProductionLedgerStatus() {
+  const { status, entries, brokenAtSeq, reason, errorMessage } = state.prodLedger;
+
+  // Header chip.
+  const chip = document.getElementById("shellStatus");
+  const chipText = document.getElementById("shellStatusText");
+  if (chip && chipText) {
+    chip.className = `shellStatus ${status}`;
+    chipText.textContent =
+      status === "checking" ? "Checking…" :
+      status === "verified" ? `Ledger verified · ${entries.length}` :
+      status === "tampered" ? "Ledger integrity violation" :
+      "Ledger status unknown";
+  }
+
+  // Overview fact tile.
+  const ovLedger = document.getElementById("ovLedger");
+  if (ovLedger) {
+    ovLedger.textContent = status === "checking" ? "Checking…" : status === "verified" ? "Verified" : status === "tampered" ? "Tampered" : "Unknown";
+    ovLedger.className = `factValue ${status === "verified" ? "allow" : status === "tampered" ? "deny" : ""}`;
+  }
+
+  // Evidence workspace — live-ledger line.
+  const chainStatusEl = document.getElementById("chainStatus");
+  if (chainStatusEl) {
+    chainStatusEl.className = status === "verified" ? "valid" : status === "tampered" ? "invalid" : "checking";
+    chainStatusEl.textContent =
+      status === "checking" ? "Checking…" :
+      status === "verified" ? `✓ Verified — ${entries.length} entries, hash-chain intact` :
+      status === "tampered" ? `✗ TAMPERED — hash-chain verification failed${brokenAtSeq != null ? ` at entry #${brokenAtSeq}` : ""}` :
+      errorMessage;
+  }
+
+  // Evidence workspace — big integrity banner.
+  const bannerEl = document.getElementById("integrityStatus");
+  if (bannerEl) {
+    let cls = `integrityBig ${status === "verified" ? "valid" : status === "tampered" ? "invalid" : "checking"}`;
+    if (status === "verified" && !integrityPulsedOnce) {
+      cls += " pulse";
+      integrityPulsedOnce = true;
+    }
+    bannerEl.className = cls;
+    bannerEl.textContent =
+      status === "checking" ? "Checking…" :
+      status === "verified" ? "✓ HASH CHAIN VERIFIED" :
+      status === "tampered" ? "✗ INTEGRITY VIOLATION DETECTED" :
+      errorMessage;
+    if (status === "verified" || status === "tampered") {
+      const kind = status === "verified" ? "allow" : "deny";
+      pulseAtmosphere(kind);
+      envSignalTo(1, kind);
+    }
+  }
+  const explainEl = document.getElementById("integrityExplain");
+  if (explainEl) {
+    explainEl.textContent = status === "tampered" && reason ? `Detected cause: ${reason}` : "";
+  }
+
+  // Evidence workspace — entries list, from the SAME fetch this status came from.
+  const listEl = document.getElementById("ledgerEntries");
+  if (listEl && (status === "verified" || status === "tampered")) {
     listEl.innerHTML = "";
-    for (const entry of res.entries.slice().reverse()) {
+    for (const entry of entries.slice().reverse()) {
       const row = el("div", { class: "card" });
       row.appendChild(
         el("div", { class: "top" }, [el("span", { class: "kind", text: `#${entry.seq} ${entry.kind}` }), el("span", { class: "time", text: fmtTime(entry.createdAt) })])
@@ -1161,22 +1703,7 @@ async function refreshLedger() {
       if (entry.signature) row.appendChild(el("div", { class: "hash", text: `sig ${truncHash(entry.signature)}` }));
       listEl.appendChild(row);
     }
-    updateShellStatus(res.chainValid, res.entries.length);
-  } catch (err) {
-    statusEl.className = "invalid";
-    statusEl.textContent = err.message;
-    updateShellStatus(false, null);
   }
-}
-
-/** Mirrors the ledger's own real, just-fetched status into the persistent shell's
- * small status chip — never a second, independently-computed value. */
-function updateShellStatus(chainValid, entryCount) {
-  const chip = document.getElementById("shellStatus");
-  const text = document.getElementById("shellStatusText");
-  if (!chip || !text) return;
-  chip.className = `shellStatus ${chainValid ? "valid" : "invalid"}`;
-  text.textContent = chainValid ? `Ledger verified${entryCount != null ? ` · ${entryCount}` : ""}` : "Ledger tampered";
 }
 
 // ---------- workspaces (Block 6) ----------
@@ -1302,11 +1829,16 @@ function initInfoControls() {
 
 /**
  * A small set of real facts pulled from state already populated elsewhere
- * (loadAgents/loadMissions/simulate-execute) — never a second, independent fetch
- * that could disagree with what the owning workspace shows. Ledger integrity is the
- * one exception worth calling out: it mirrors refreshLedger()'s own just-fetched
- * #chainStatus text/class rather than re-deriving anything, so Overview and Evidence
- * can never show two different answers to the same real question.
+ * (loadAgents/loadMissions/simulate-execute) — never a second, independent fetch that
+ * could disagree with what the owning workspace shows. Ledger integrity (#ovLedger) is
+ * NOT set here at all — it is owned entirely by renderProductionLedgerStatus() (see
+ * the "ledger — single source of truth" section), which paints it directly from
+ * state.prodLedger whenever that state changes. This function used to instead scrape
+ * #chainStatus's own rendered className/textContent as its "source" for #ovLedger —
+ * a real bug (found during a production-vs-lab consistency audit): a second,
+ * DOM-derived read of the same fact, one more place that could show something
+ * different from what Evidence actually knows. Deliberately left untouched by
+ * renderOverview() now, rather than reintroducing a second source of truth.
  */
 function renderOverview() {
   const agent = state.agents.find((a) => a.agentId === state.activeAgentId);
@@ -1344,17 +1876,6 @@ function renderOverview() {
     ovDecision.textContent = "No transaction submitted yet";
     ovDecision.className = "factValue";
     ovDecisionDetail.textContent = "";
-  }
-
-  const ovLedger = document.getElementById("ovLedger");
-  const chainStatus = document.getElementById("chainStatus");
-  if (chainStatus && chainStatus.textContent && chainStatus.textContent !== "—") {
-    const valid = chainStatus.className === "valid";
-    ovLedger.textContent = valid ? "Verified" : "Tampered";
-    ovLedger.className = `factValue ${valid ? "allow" : "deny"}`;
-  } else {
-    ovLedger.textContent = "—";
-    ovLedger.className = "factValue";
   }
 }
 
@@ -1585,11 +2106,36 @@ function boot() {
   initEnvironment();
   initInfoControls();
   checkDemoMode();
+  loadLabIdentity();
+  checkLabIntegrity(); // reflects a persisted lab tamper violation immediately, even before any lab action this session
   loadAgents();
   loadMissions();
-  refreshLedger();
+  verifyProductionLedger();
   startStream();
   showWorkspace("overview");
+}
+
+/**
+ * Truthful display labels for each provider string GET /demo-mode can report (see
+ * src/risk/types.ts's IntentJudge.provider — "demo" | "anthropic" | "gemini" for the
+ * three real implementations this codebase has). A provider string this dashboard
+ * doesn't recognize renders its raw value rather than guessing a label for it — never
+ * silently mislabels an unrecognized provider as any of the known three.
+ */
+function describeProvider(provider, model) {
+  if (provider === "demo") return { label: "AI Risk Judge: Demo / Deterministic", live: false };
+  if (provider === "gemini") return { label: `🤖 Gemini AI — Live${model ? ` (${model})` : ""}`, live: true };
+  if (provider === "anthropic") return { label: `🤖 Anthropic — Live${model ? ` (${model})` : ""}`, live: true };
+  return { label: `AI Risk Judge: ${provider || "unknown"}`, live: false };
+}
+
+function renderAiProvenanceBadge(body) {
+  const badge = document.getElementById("aiProvenanceBadge");
+  if (!badge) return;
+  const { label, live } = describeProvider(body.aiProvider, body.aiModel);
+  badge.textContent = label;
+  badge.className = `aiProvenanceBadge${live ? " live" : ""}`;
+  badge.style.display = "inline-block";
 }
 
 // Unauthenticated on purpose (see src/api/server.ts's GET /demo-mode). Called from
@@ -1598,37 +2144,92 @@ function boot() {
 // this file's top-level init() IIFE automatically; calling this unconditionally there
 // previously caused an uncounted, never-resolving fetch that broke those tests' own
 // concurrent-request-counting assumptions (found and fixed in Step 12) — so it only
-// ever runs once a real sign-in has actually happened. This is purely a display flag;
-// it never changes which endpoints the dashboard calls or how a result is interpreted
-// — the server-side judge/rail selection (src/api/demoMode.ts) is what actually makes
-// demo mode a demo, not anything client-side. Toggles the Step 13 "Attack Theatre"
-// panel — its scenarios talk to real endpoints regardless, but the panel itself is
-// hidden outside demo mode so a production dashboard never shows it.
+// ever runs once a real sign-in has actually happened. demoMode itself is purely a
+// display flag for the header badge — it never changes which endpoints the dashboard
+// calls or how a result is interpreted; the server-side judge/rail selection
+// (src/api/demoMode.ts) is what actually makes demo mode a demo, not anything
+// client-side. The Security Demonstration Lab panel is always visible regardless of
+// this flag (see index.html) — it runs against its own isolated environment
+// unconditionally, so there is nothing here left to toggle for it.
 async function checkDemoMode() {
   try {
     const res = await fetch("/demo-mode");
     if (!res.ok) return;
     const body = await res.json();
-    const theatre = document.getElementById("demoTheatre");
-    const prodNote = document.getElementById("securityProdNote");
-    if (body.demoMode) {
-      theatre.style.display = "block";
-      if (prodNote) prodNote.style.display = "none";
-    } else {
-      theatre.style.display = "none";
-      if (prodNote) prodNote.style.display = "block";
-    }
+    renderAiProvenanceBadge(body);
   } catch {
-    /* non-fatal — the dashboard still works, it just won't show the demo-mode theatre panel */
+    /* non-fatal — the dashboard still works, it just won't show the AI-provenance badge */
+  }
+}
+
+// ---------- Security Demonstration Lab — isolated identity bootstrap ----------
+// Every lab scenario below talks to /lab/* — a completely separate mount of the exact
+// same pipeline, backed by its own database (see src/api/securityLab.ts) — using this
+// lab-only principal, never the real signed-in session's state.apiKey/activeAgentId.
+// Persisted in localStorage (LS_KEYS.labPrincipalId/labApiKey) so a page refresh
+// reconnects to the SAME lab principal rather than losing track of prior lab agents/
+// missions, and so a persisted tamper violation (see checkLabIntegrity()) is still
+// visible to the same viewer after a refresh without needing to re-run anything.
+function loadLabIdentity() {
+  const principalId = localStorage.getItem(LS_KEYS.labPrincipalId);
+  const apiKey = localStorage.getItem(LS_KEYS.labApiKey);
+  if (principalId && apiKey) state.lab = { principalId, apiKey };
+}
+function saveLabIdentity(principalId, apiKey) {
+  state.lab = { principalId, apiKey };
+  localStorage.setItem(LS_KEYS.labPrincipalId, principalId);
+  localStorage.setItem(LS_KEYS.labApiKey, apiKey);
+}
+function clearLabIdentity() {
+  state.lab = { principalId: null, apiKey: null };
+  localStorage.removeItem(LS_KEYS.labPrincipalId);
+  localStorage.removeItem(LS_KEYS.labApiKey);
+}
+
+/** Creates a lab principal exactly once (or reuses the persisted one from a prior visit) — never the real signed-in principal. Idempotent: safe to call before every lab action. */
+async function ensureLabIdentity() {
+  if (state.lab.apiKey) return state.lab;
+  const principalId = `lab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const res = await api("/lab/principals", { method: "POST", body: { principalId } });
+  saveLabIdentity(principalId, res.apiKey);
+  return state.lab;
+}
+
+/**
+ * The ONLY wrapper that ever authenticates as the lab's own, separate principal
+ * (state.lab.apiKey) — mirrors principalApi() above, but with a deliberately DIFFERENT
+ * recovery strategy for the same underlying failure mode (a stale identity from a
+ * previous server process — the lab's db is always in-memory, so this happens on
+ * every server restart, not just an explicit /lab/reset). The lab has no user-facing
+ * "sign in" concept at all — ensureLabIdentity() already creates an identity fully
+ * automatically, with no user action — so surfacing a "please sign in again" message
+ * here would be actively confusing (there is nothing for the user to do about it).
+ * The correct, zero-friction recovery is instead to silently discard the stale
+ * identity and mint a fresh one, then retry exactly once; a second failure is a real,
+ * different problem and is allowed to propagate to the caller's own error handling.
+ */
+async function labApi(path, opts = {}) {
+  await ensureLabIdentity();
+  try {
+    return await api(path, { ...opts, auth: state.lab.apiKey });
+  } catch (err) {
+    if (err && (err.status === 401 || err.status === 403)) {
+      clearLabIdentity();
+      await ensureLabIdentity();
+      return await api(path, { ...opts, auth: state.lab.apiKey });
+    }
+    throw err;
   }
 }
 
 // ---------- demo theatre (Step 13) — Scenario A: concurrent budget race ----------
-// Every attempt below is a real POST /transactions call against the real,
+// Every attempt below is a real POST /lab/transactions call against the real,
 // unmodified pipeline (checkMissionGate -> MissionReservationStore.reserve()'s single
-// atomic SQL UPDATE) — nothing here is simulated or pre-computed. See
-// src/mission/reservation.ts and src/mission/__tests__/mission-reservation.test.ts for
-// the same guarantee proven directly against the primitive.
+// atomic SQL UPDATE) — nothing here is simulated or pre-computed. Runs against the
+// isolated Security Demonstration Lab (src/api/securityLab.ts), never the production
+// ledger. See src/mission/reservation.ts and
+// src/mission/__tests__/mission-reservation.test.ts for the same guarantee proven
+// directly against the primitive.
 
 let attackMissionId = null;
 let attackAgentId = null;
@@ -1673,18 +2274,31 @@ function scheduleReveal(applyFn, delayMs) {
 
 async function attackCreateMission() {
   const infoEl = document.getElementById("attackMissionInfo");
-  if (!state.activeAgentId) {
-    infoEl.textContent = "Select an agent (left panel) before creating an attack mission.";
-    return;
-  }
-  const missionId = `attack-${Date.now()}`;
+  infoEl.textContent = "Bootstrapping isolated lab identity and agent…";
   try {
-    await api("/missions", {
+    const agentId = `lab-agent-${Date.now()}`;
+    const agentRes = await labApi("/lab/agents", {
       method: "POST",
-      auth: state.apiKey,
+      body: {
+        agentId,
+        delegatedGoal: "Security Demonstration Lab — bounded budget for a live concurrency demonstration.",
+        caveats: {
+          maxAmountMinorUnits: ATTACK_MISSION_BUDGET_MINOR_UNITS,
+          currency: "USD",
+          categories: [ATTACK_CATEGORY],
+          rails: [ATTACK_RAIL],
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        },
+      },
+    });
+    saveToken(agentId, agentRes.token);
+
+    const missionId = `attack-${Date.now()}`;
+    await labApi("/lab/missions", {
+      method: "POST",
       body: {
         missionId,
-        agentId: state.activeAgentId,
+        agentId,
         goal: "Attack-theatre demo mission — bounded budget for a live concurrency demonstration.",
         budgetMinorUnits: ATTACK_MISSION_BUDGET_MINOR_UNITS,
         currency: "USD",
@@ -1694,10 +2308,9 @@ async function attackCreateMission() {
       },
     });
     attackMissionId = missionId;
-    attackAgentId = state.activeAgentId;
-    infoEl.textContent = `Mission "${missionId}" ready — budget $2,000.00, agent ${state.activeAgentId}.`;
+    attackAgentId = agentId;
+    infoEl.textContent = `Mission "${missionId}" ready — budget $2,000.00, lab agent ${agentId}.`;
     document.getElementById("attackVerified").textContent = "";
-    await loadMissions();
   } catch (err) {
     infoEl.textContent = `Failed to create attack mission: ${err.message}`;
   }
@@ -1879,7 +2492,7 @@ async function launchBudgetAttack() {
     let settled = false;
     let statusText = "ERROR";
     try {
-      const res = await api("/transactions", {
+      const res = await api("/lab/transactions", {
         method: "POST",
         auth: token,
         headers: { "idempotency-key": crypto.randomUUID() },
@@ -1936,7 +2549,7 @@ async function launchBudgetAttack() {
   // src/mission/ledger.ts's computeMissionSpent) so the displayed numbers are PROVEN
   // to match real server-side state, not merely self-consistent with the tally above.
   try {
-    const mission = await api(`/missions/${encodeURIComponent(attackMissionId)}`, { auth: state.apiKey });
+    const mission = await labApi(`/lab/missions/${encodeURIComponent(attackMissionId)}`);
     const overspend = Math.max(0, mission.spentMinorUnits - mission.budgetMinorUnits);
     const detail =
       `Server-confirmed: spent ${fmtMoney(mission.spentMinorUnits, mission.currency)} of ${fmtMoney(mission.budgetMinorUnits, mission.currency)} budget ` +
@@ -1958,7 +2571,10 @@ async function launchBudgetAttack() {
     verifiedEl.appendChild(el("div", { class: "hint", text: detail, style: "margin-top:6px" }));
     pulseAtmosphere(overspend === 0 ? "allow" : "deny");
     envSignalTo(1, overspend === 0 ? "allow" : "deny");
-    refreshLedger(); // 20 real ledger writes just happened — keep the shell status chip and Evidence workspace honest
+    // 20 lab ledger writes just happened — keep the lab's own integrity panel honest.
+    // Deliberately never calls verifyProductionLedger() (the REAL production Evidence
+    // workspace) — these writes happened in the isolated lab ledger, not production.
+    checkLabIntegrity();
   } catch (err) {
     verifiedEl.innerHTML = "";
     verifiedEl.appendChild(el("div", { class: "hint", text: `Could not confirm server-side mission state: ${err.message}` }));
@@ -2073,7 +2689,7 @@ async function runRevocationScenario() {
       rails: ["stripe_test", "mock_x402"],
       expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
     };
-    const parentRes = await api("/agents", { method: "POST", auth: state.apiKey, body: { agentId: parentId, delegatedGoal: "Attack-theatre demo parent.", caveats: parentCaveats } });
+    const parentRes = await labApi("/lab/agents", { method: "POST", body: { agentId: parentId, delegatedGoal: "Attack-theatre demo parent.", caveats: parentCaveats } });
     saveToken(parentId, parentRes.token);
 
     const childCaveats = {
@@ -2083,7 +2699,7 @@ async function runRevocationScenario() {
       rails: ["mock_x402"],
       expiresAt: parentCaveats.expiresAt,
     };
-    const childRes = await api(`/agents/${parentId}/attenuate`, { method: "POST", auth: state.apiKey, body: { agentId: childId, delegatedGoal: "Attack-theatre demo child.", caveats: childCaveats } });
+    const childRes = await labApi(`/lab/agents/${parentId}/attenuate`, { method: "POST", body: { agentId: childId, delegatedGoal: "Attack-theatre demo child.", caveats: childCaveats } });
     saveToken(childId, childRes.token);
 
     renderDelegationChain(chainEl, [
@@ -2096,16 +2712,16 @@ async function runRevocationScenario() {
       counterparty: "acme-airlines",
     };
 
-    const before = await api("/transactions", { method: "POST", auth: childRes.token, headers: { "idempotency-key": crypto.randomUUID() }, body: txBody }).catch((err) => ({ __error: err.message }));
+    const before = await api("/lab/transactions", { method: "POST", auth: childRes.token, headers: { "idempotency-key": crypto.randomUUID() }, body: txBody }).catch((err) => ({ __error: err.message }));
     resultsEl.appendChild(renderRevocationResult("Before revocation", before));
 
-    await api(`/agents/${childId}/revoke`, { method: "POST", auth: state.apiKey, body: { reason: "Attack-theatre demo revocation" } });
+    await labApi(`/lab/agents/${childId}/revoke`, { method: "POST", body: { reason: "Attack-theatre demo revocation" } });
     renderDelegationChain(chainEl, [
       { role: "Parent", agentId: parentId, caveats: parentCaveats, revoked: false },
       { role: "Child (attenuated)", agentId: childId, caveats: childCaveats, revoked: true },
     ]);
 
-    const after = await api("/transactions", { method: "POST", auth: childRes.token, headers: { "idempotency-key": crypto.randomUUID() }, body: txBody }).catch((err) => ({ __error: err.message }));
+    const after = await api("/lab/transactions", { method: "POST", auth: childRes.token, headers: { "idempotency-key": crypto.randomUUID() }, body: txBody }).catch((err) => ({ __error: err.message }));
     // "Rail calls" is read directly off the real response's own shape — execution is
     // only ever present when verdict === "allow" (see executeTransaction's own,
     // unmodified contract) — never asserted or assumed independent of what the server
@@ -2116,7 +2732,10 @@ async function runRevocationScenario() {
     // confirmed the post-revocation attempt was denied — never on the optimistic
     // assumption that revoke() alone means the next attempt will fail.
     if (after && after.decision && after.decision.verdict !== "allow") envSignalTo(1, "deny");
-    refreshLedger(); // the revocation itself and both real attempts wrote real ledger entries
+    // The revocation itself and both attempts wrote real entries — to the isolated lab
+    // ledger, never the production one, so this deliberately calls the lab's own
+    // integrity check, never verifyProductionLedger() (the real production Evidence workspace).
+    checkLabIntegrity();
   } catch (err) {
     resultsEl.appendChild(el("div", { class: "error", text: err.message }));
   } finally {
@@ -2125,53 +2744,123 @@ async function runRevocationScenario() {
 }
 
 // ---------- demo theatre (Step 13) — Scenario C: ledger integrity ----------
-// checkIntegrity() reads GET /ledger's existing, unmodified chainValid field
-// (src/state/ledger.ts's verifyChain(), untouched). tamperLatestEntry() is the ONLY
-// call in this whole feature to the one new, narrowly-scoped, demo-mode-only backend
-// route (src/api/demoTamper.ts) — see that file for exactly what it does and does not
-// allow.
+// Production integrity checking/rendering now lives entirely in
+// verifyProductionLedger()/renderProductionLedgerStatus() above — the single source
+// of truth for header/Overview/Evidence — see that section's doc comment for why the
+// old, separate checkIntegrity()/updateShellStatus() pair was removed.
 
-async function checkIntegrity() {
-  const statusEl = document.getElementById("integrityStatus");
+// ---------- Security Demonstration Lab — ledger tamper & explicit recovery ----------
+// Mirrors verifyProductionLedger() above in spirit — same VERIFIED/TAMPERED/ERROR
+// distinction, same never-leak-the-raw-error discipline (describeLedgerError(), shared
+// with production) — but against /lab/ledger and /lab/demo/tamper-ledger-entry/:seq —
+// the lab's own isolated ledger — never the production one. The real production
+// ledger has no tamper route at all anymore (see src/api/main.ts); this is the only
+// place tampering is ever demonstrated. Called from boot() (see init()/boot() below)
+// so a persisted violation is visible immediately on page load/refresh, not only after
+// a manual "Verify chain" click — the violation is server-side state (the lab's own
+// db), so it survives a refresh on its own; this call only makes sure the UI reflects
+// it without requiring an extra click. This is a genuinely separate function from
+// verifyProductionLedger() (not a shared code path) — deliberately, so a bug in one
+// can never silently affect the other's rendering, and so it's structurally obvious
+// this never reads or writes state.prodLedger.
+/**
+ * Lab-specific counterpart to describeLedgerError() — deliberately never mentions
+ * "sign in": the lab has no sign-in concept, and by the time this is ever shown,
+ * labApi() has ALREADY silently discarded a stale identity and retried once (see its
+ * own doc comment) — a stale key is the common case and is invisible to the user by
+ * design, resolving itself as a normal "Checking…" → "VERIFIED" transition. Reaching
+ * this function at all means that retry also failed, a genuinely different problem.
+ */
+function describeLabError(err) {
+  if (err && err.status === 401) return "Could not verify the lab environment — please try again.";
+  return "Could not reach the server to verify the lab — check your connection and try again.";
+}
+
+async function checkLabIntegrity() {
+  const statusEl = document.getElementById("labIntegrityStatus");
+  if (!statusEl) return null;
   try {
-    const res = await api("/ledger", { auth: state.apiKey });
-    let cls = `integrityBig ${res.chainValid ? "valid" : "invalid"}`;
-    if (res.chainValid && !integrityPulsedOnce) {
-      cls += " pulse";
-      integrityPulsedOnce = true;
-    }
-    statusEl.className = cls;
-    statusEl.textContent = res.chainValid ? "✓ HASH CHAIN VERIFIED" : "✗ INTEGRITY VIOLATION DETECTED";
-    pulseAtmosphere(res.chainValid ? "allow" : "deny");
-    envSignalTo(1, res.chainValid ? "allow" : "deny");
-    updateShellStatus(res.chainValid, res.entries.length);
+    const res = await labApi("/lab/ledger");
+    statusEl.className = `integrityBig ${res.chainValid ? "valid" : "invalid"}`;
+    statusEl.textContent = res.chainValid
+      ? "✓ VERIFIED"
+      : `🔴 INTEGRITY VIOLATION DETECTED${res.brokenAtSeq != null ? ` at entry #${res.brokenAtSeq}` : ""}`;
     return res;
   } catch (err) {
-    statusEl.className = "integrityBig invalid";
-    statusEl.textContent = "✗ " + err.message;
+    // An error checking the LAB (auth/network) is never displayed as "tampered" here
+    // either — same distinction verifyProductionLedger() makes, same sanitized,
+    // never-raw message.
+    statusEl.className = "integrityBig checking";
+    statusEl.textContent = describeLabError(err);
     return null;
   }
 }
 
-async function tamperLatestEntry() {
-  const explainEl = document.getElementById("integrityExplain");
+async function tamperLabLatestEntry() {
+  const explainEl = document.getElementById("labIntegrityExplain");
   explainEl.textContent = "";
   try {
-    const ledgerRes = await api("/ledger", { auth: state.apiKey });
+    const ledgerRes = await labApi("/lab/ledger");
     const entries = ledgerRes.entries;
     if (!entries || entries.length === 0) {
-      explainEl.textContent = "No ledger entries yet to tamper with — create an agent or run a transaction first.";
+      explainEl.textContent = "No lab ledger entries yet to tamper with — create an attack mission or run the revocation scenario first.";
       return;
     }
     const latest = entries[entries.length - 1];
-    await api(`/demo/tamper-ledger-entry/${latest.seq}`, { method: "POST", auth: state.apiKey });
-    const after = await checkIntegrity();
+    await labApi(`/lab/demo/tamper-ledger-entry/${latest.seq}`, { method: "POST" });
+    const after = await checkLabIntegrity();
     explainEl.textContent =
-      `Entry #${latest.seq} (${latest.kind}) was altered directly in storage, bypassing Aegis entirely — its content ` +
-      `hash and signature were computed over the ORIGINAL content and were never recomputed.` +
+      `Entry #${latest.seq} (${latest.kind}) was altered directly in the lab's isolated storage, bypassing Aegis entirely — its ` +
+      `content hash and signature were computed over the ORIGINAL content and were never recomputed. This violation will remain ` +
+      `visible — including across a page refresh — until explicitly acknowledged and restored below.` +
       (after && !after.chainValid ? " verifyChain() detected the mismatch immediately, at exactly that entry." : "");
   } catch (err) {
-    explainEl.textContent = `Tamper failed: ${err.message}`;
+    explainEl.textContent = `Tamper failed: ${describeLabError(err)}`;
+  }
+}
+
+/**
+ * The ONLY way the lab's tampered state ever changes back to verified — an explicit,
+ * confirmed human action, never automatic. Requires the REAL signed-in principal's
+ * auth (state.apiKey), not the lab's own (about-to-be-wiped) identity, so this works
+ * even when the lab's principal store is already gone. Wipes and rebuilds the ENTIRE
+ * isolated lab environment server-side (see src/api/securityLab.ts's createSecurityLab
+ * — a full replacement, never a selective "fix this one entry") — every lab principal,
+ * agent, mission, and ledger entry from before this call is gone. This never touches,
+ * and cannot touch, real production evidence — see main.ts's POST /lab/reset, which is
+ * structurally incapable of reaching the production db at all.
+ */
+async function recoverLab() {
+  const explainEl = document.getElementById("labRecoverExplain");
+  explainEl.textContent = "";
+  const confirmed = confirm(
+    "Integrity violation detected.\n\n" +
+      "You are about to explicitly restore the isolated demonstration ledger to a clean verified state. " +
+      "This action does not erase or normalize tampering in a real production evidence system — it only resets " +
+      "the separate, isolated Security Demonstration Lab environment.\n\n" +
+      "This wipes all current lab agents, missions, and ledger entries and starts a fresh, empty, verified lab."
+  );
+  if (!confirmed) return;
+  try {
+    await principalApi("/lab/reset", { method: "POST" });
+    // The lab's principal store was just wiped server-side — the locally-persisted
+    // lab identity no longer authenticates anything, so it must be discarded and
+    // re-bootstrapped from scratch, not merely re-used.
+    clearLabIdentity();
+    attackMissionId = null;
+    attackAgentId = null;
+    document.getElementById("attackMissionInfo").textContent = "Create an attack mission to begin — a lab agent is created automatically.";
+    document.getElementById("attackSummary").style.display = "none";
+    document.getElementById("attackBudgetBar").style.display = "none";
+    document.getElementById("attackAttempts").innerHTML = "";
+    document.getElementById("attackVerified").innerHTML = "";
+    document.getElementById("attackTrace").innerHTML = "";
+    document.getElementById("chainVisual").innerHTML = "";
+    document.getElementById("revocationResults").innerHTML = "";
+    await checkLabIntegrity();
+    explainEl.textContent = "Isolated lab environment restored to a clean, verified state.";
+  } catch (err) {
+    explainEl.textContent = `Recovery failed: ${describeLedgerError(err)}`;
   }
 }
 
@@ -2186,15 +2875,15 @@ document.getElementById("attackLaunchBtn").addEventListener("click", async () =>
   }
 });
 document.getElementById("revocationRunBtn").addEventListener("click", runRevocationScenario);
-document.getElementById("integrityCheckBtn").addEventListener("click", checkIntegrity);
-document.getElementById("integrityTamperBtn").addEventListener("click", tamperLatestEntry);
+document.getElementById("integrityCheckBtn").addEventListener("click", verifyProductionLedger);
+document.getElementById("labIntegrityCheckBtn").addEventListener("click", checkLabIntegrity);
+document.getElementById("labIntegrityTamperBtn").addEventListener("click", tamperLabLatestEntry);
+document.getElementById("labRecoverBtn").addEventListener("click", recoverLab);
 
 (function init() {
-  const apiKey = localStorage.getItem(LS_KEYS.apiKey);
-  const principalId = localStorage.getItem(LS_KEYS.principalId);
-  if (apiKey && principalId) {
-    state.apiKey = apiKey;
-    state.principalId = principalId;
-    boot();
-  }
+  // A stored key is validated against the server before ANYTHING treats the user as
+  // signed in — see validateSession()'s own doc comment for the bug this replaces
+  // (a stale localStorage key used to be trusted on sight, with each dashboard widget
+  // then discovering independently, inconsistently, that it wasn't actually valid).
+  validateSession();
 })();

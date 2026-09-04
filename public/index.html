@@ -48,6 +48,11 @@
   html { background: var(--bg); }
   body {
     margin: 0;
+    /* Belt-and-suspenders: the actual overflow sources (grid items with no
+       min-width: 0, unbroken long strings) are fixed at their source below — this
+       is a hard guarantee that no future regression of that kind ever produces a
+       page-level horizontal scrollbar again. */
+    overflow-x: hidden;
     font-family: var(--sans);
     /* No background here on purpose — html's background above is the canvas-level
        fallback (it paints behind z-index:-3 content correctly). body's own
@@ -175,12 +180,25 @@
   header h1 span { color: var(--text-dim); font-weight: 400; letter-spacing: 0.1px; }
   .headerTag { display: inline-block; margin-left: 10px; padding: 2px 7px; border: 1px solid var(--accent); border-radius: 3px; font-family: var(--mono); font-size: 9px; letter-spacing: 0.6px; text-transform: uppercase; color: var(--accent); vertical-align: 2px; }
   header .tagline { font-size: 11.5px; color: var(--text-dim); margin-top: 3px; letter-spacing: 0.1px; }
-  .shellRight { display: flex; align-items: center; gap: 18px; }
+  .shellRight { display: flex; align-items: center; gap: 14px; }
   .shellStatus { font-family: var(--mono); font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
   .shellStatus .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); display: inline-block; }
   .shellStatus.valid .dot { background: var(--allow); }
   .shellStatus.invalid .dot { background: var(--deny); }
+  .shellStatus.verified .dot { background: var(--allow); }
+  .shellStatus.tampered .dot { background: var(--deny); }
+  .shellStatus.checking .dot, .shellStatus.error .dot { background: var(--text-faint); }
   #principalBadge { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+  /* AI provenance badge — truthful, always-visible identification of which risk judge
+     this deployment is actually configured to use. Color is purely informational
+     (demo = neutral text-dim, a real live provider = accent) — never implies a
+     verdict, since that would confuse it with the allow/deny/escalate vocabulary used
+     everywhere else in this dashboard. */
+  .aiProvenanceBadge {
+    font-family: var(--mono); font-size: 11px; padding: 3px 9px; border-radius: 3px;
+    border: 1px solid var(--border); color: var(--text-dim); letter-spacing: 0.2px; white-space: nowrap;
+  }
+  .aiProvenanceBadge.live { border-color: var(--accent); color: var(--accent-strong); }
 
   /* ---- persistent nav: hidden until signed in, then a plain row of text-weight
      tabs — no pill buttons, no icons-as-decoration. The active workspace is the
@@ -241,12 +259,13 @@
      containment: an interactive composer + its live result, a budget anchor, an
      evidence strip. Everything else is a plain, unboxed .section. */
   .surface {
-    /* Dark glass, not an opaque panel — enough tint that dense text (composer
-       forms, mission detail, sign-in) stays comfortably readable, but the
-       environment genuinely shows through, not just bleeds at the edges. Dropped
-       from 0.93 to 0.60 this pass; body's text-shadow is what keeps text crisp at
-       this lower opacity instead of the panel doing all the contrast work alone. */
-    background: rgba(22,18,13,0.60);
+    /* Dark glass, not an opaque panel — raised from 0.60 to 0.78 this pass (demo-
+       readiness audit: text and form controls over the brighter environment photos
+       were reading as low-contrast, especially on a projector/screen-share). Still
+       genuinely translucent — the environment remains visible through it — just no
+       longer relying on body's text-shadow alone to carry legibility for dense
+       forms (composer, mission detail, sign-in). */
+    background: rgba(22,18,13,0.78);
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 16px;
@@ -267,8 +286,10 @@
     padding-bottom: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border-soft);
   }
 
-  /* Visible by default (matches every existing app.js call site, which only ever
-     sets style.display = "none" after a real sign-in — never sets it back). */
+  /* Visible by default — matches every app.js call site that touches it: boot()
+     hides it on a real sign-in; showAuthScreen() (session expiry — a failed sign-in
+     attempt never gets this far, since the screen was already showing) shows it
+     again. */
   #authScreen {
     display: grid; grid-template-columns: 1fr 380px; gap: 56px;
     max-width: 900px; margin: 100px auto; padding: 0 20px; align-items: center;
@@ -282,6 +303,25 @@
     border-left: 2px solid var(--border); margin-bottom: 2px;
   }
   .authHierarchy li b { color: var(--text); font-weight: 600; }
+
+  /* "── or ──" divider between the two auth-screen flows — a rule, not a paragraph. */
+  .authDivider {
+    display: flex; align-items: center; gap: 10px; margin: 20px 0;
+    color: var(--text-faint); font-family: var(--mono); font-size: 10px;
+    text-transform: uppercase; letter-spacing: 0.8px;
+  }
+  .authDivider::before, .authDivider::after { content: ""; flex: 1; height: 1px; background: var(--border-soft); }
+
+  /* The one-time issued-key reveal — visually distinct (accent border) since it is
+     the one moment on this screen carrying an unrecoverable secret. */
+  .issuedKeyBox {
+    border: 1px solid var(--accent); border-radius: 5px; padding: 10px 12px;
+    margin-top: 8px; background: rgba(217,157,66,0.08);
+  }
+  .issuedKeyLabel { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 8px; }
+  .issuedKeyLabel:first-child { margin-top: 0; }
+  .issuedKeyPrincipal { font-family: var(--mono); font-size: 13px; color: var(--text); }
+  .issuedKeyValue { font-family: var(--mono); font-size: 12.5px; color: var(--accent-strong); word-break: break-all; user-select: all; }
   #app { display: none; }
 
   /* ---- workspaces: exactly one visible at a time. Reuses the exact same render
@@ -373,6 +413,17 @@
   .ovSubtitle { font-family: var(--mono); font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); margin-top: 12px; }
   .ovStatement { font-size: 19px; font-weight: 500; color: var(--text-dim); margin-top: 20px; letter-spacing: 0.2px; }
 
+  /* One-click, real (never mocked) demo setup — creates a real agent + mission and
+     runs one real approved and one real denied transaction, so a presentation can
+     jump straight to a meaningful state instead of building it live, click by click. */
+  .demoScenarioBar {
+    display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap;
+    margin-top: 22px; padding: 14px 18px; border: 1px solid var(--border-soft); border-radius: 6px;
+    background: rgba(13,10,6,0.55); max-width: 720px;
+  }
+  .demoScenarioTitle { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text); margin-bottom: 3px; }
+  #demoScenarioStatus { max-width: 44ch; margin: 0; }
+
   .factGrid { display: flex; flex-wrap: wrap; gap: 44px 56px; margin-top: 56px; padding-top: 26px; border-top: 1px solid var(--border-soft); }
   .factBlock { min-width: 170px; cursor: default; }
   .factBlock.goto { cursor: pointer; }
@@ -444,6 +495,7 @@
   #chainStatus { font-size: 12px; margin-bottom: 8px; }
   #chainStatus.valid { color: var(--allow); }
   #chainStatus.invalid { color: var(--deny); }
+  #chainStatus.checking { color: var(--text-dim); }
   .hash { font-family: var(--mono); font-size: 11px; color: var(--text-dim); word-break: break-all; letter-spacing: 0.1px; }
   .error { color: var(--deny); font-size: 12px; margin-top: 8px; }
   .hint { font-size: 12px; color: var(--text-dim); margin-top: 6px; line-height: 1.5; }
@@ -477,6 +529,36 @@
   .stageDetail { font-size: 12px; color: var(--text-dim); margin-top: 4px; line-height: 1.5; }
   .stageDetail b { color: var(--text); }
 
+  /* Decision Inspector footer — "STOPPED AT" / "EXECUTION" / "FINAL", the one-glance
+     read a presenter reaches for without re-parsing every stage above. Every value
+     here is a direct read of real response fields (see renderDecisionSummary/
+     decisionStoppedAt in app.js) — never hardcoded frontend text. */
+  .decisionSummary {
+    margin-top: 14px; padding: 10px 12px; border-radius: 5px; border: 1px solid var(--border-soft);
+    font-family: var(--mono); font-size: 12px; background: rgba(13,10,6,0.35);
+  }
+  .decisionSummary-allow { border-color: var(--allow); }
+  .decisionSummary-deny { border-color: var(--deny); }
+  .decisionSummary-escalate { border-color: var(--escalate); }
+  .decisionSummaryLine { color: var(--text-dim); line-height: 1.7; }
+  .decisionSummaryLine b { color: var(--text); }
+  .decisionSummaryFinal { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border-soft); font-size: 13px; font-weight: 700; color: var(--text); letter-spacing: 0.3px; }
+  .decisionSummary-allow .decisionSummaryFinal { color: var(--allow); }
+  .decisionSummary-deny .decisionSummaryFinal { color: var(--deny); }
+  .decisionSummary-escalate .decisionSummaryFinal { color: var(--escalate); }
+
+  /* The Decision Inspector's empty state, shown until the first Simulate/Execute —
+     app.js's renderDecisionResult() unconditionally does container.innerHTML = ""
+     before rendering a real result, so this markup is simply overwritten the moment
+     one exists; it never has to be cleared by hand. Echoes .chainSequence's stage
+     labels (same six stages, same wsHero line at the top of this workspace) but in
+     muted, non-accent color — "this is the pipeline, nothing has run through it yet",
+     not a second live status line. */
+  .decisionEmpty { padding: 18px 4px; text-align: center; }
+  .decisionEmpty .chainSequence { color: var(--text-faint); margin: 0 0 10px; }
+  .decisionEmpty .chainSequence b { color: var(--text-dim); font-weight: 600; }
+  .decisionEmpty p { font-size: 12.5px; color: var(--text-dim); max-width: 46ch; margin: 0 auto; line-height: 1.6; }
+
   /* Identity first, at real weight — the mission's own name is the primary fact
      this whole panel is about, same register the Decision Inspector's verdict
      line already gets. */
@@ -500,18 +582,68 @@
   /* Translucent, not opaque — Security is meant to be the workspace where the
      photograph is most visible; the theatre keeps its own darker "stage" identity
      without fully blocking the environment behind it. */
-  #demoTheatre { display: none; background: rgba(13,10,6,0.46); border: 1px solid var(--border); border-radius: 6px; padding: 30px 32px; margin-top: 4px; }
+  #demoTheatre { background: rgba(13,10,6,0.62); border: 1px solid var(--border); border-radius: 6px; padding: 30px 32px; margin-top: 4px; }
   .theatreTitle { margin-bottom: 22px; }
   .theatreTitle h2 { margin: 0 0 4px; font-size: 16px; font-weight: 700; letter-spacing: 0.1px; color: var(--text); }
-  .theatreGrid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 0; }
-  .theatreCol { padding: 0 32px; border-left: 1px solid var(--border-soft); }
+  .theatreGrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; }
+  /* min-width: 0 overrides a grid item's default `min-width: auto` — without it, a
+     `1fr` track refuses to shrink below its CONTENT's intrinsic width (a long hash
+     string, an unbroken id, a wrapped-looking-but-not-actually-wrapping attempt-grid),
+     forcing the whole .theatreGrid — and the page itself — wider than the viewport.
+     This was the actual, confirmed root cause of the Security page's horizontal
+     scrollbar; the grid-template-columns responsive breakpoints below never mattered
+     as long as this was still overflowing them from the inside. */
+  .theatreCol { padding: 0 28px; border-left: 1px solid var(--border-soft); min-width: 0; }
   .theatreCol:first-child { padding-left: 0; border-left: none; }
   .theatreCol h2 { font-size: 12px; font-weight: 600; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
-  @media (max-width: 1000px) {
+  @media (max-width: 1300px) {
+    .theatreGrid { grid-template-columns: 1fr 1fr; }
+    .theatreCol:nth-child(3) { grid-column: 1 / -1; border-left: none; border-top: 1px solid var(--border-soft); padding: 20px 0 0; margin-top: 4px; }
+  }
+  @media (max-width: 800px) {
     .theatreGrid { grid-template-columns: 1fr; }
     .theatreCol { padding: 0 0 20px; border-left: none; border-top: 1px solid var(--border-soft); padding-top: 20px; }
     .theatreCol:first-child { border-top: none; padding-top: 0; }
+    .theatreCol:nth-child(3) { margin-top: 0; }
   }
+
+  /* ---- Production Security Controls — real, always-active mechanisms, distinct
+     from the interactive Lab below. Cards, not buttons: nothing here is clickable
+     or destructive, it is a truthful inventory of what is actually enforced. ---- */
+  /* Section eyebrow — "🟢 LIVE PRODUCTION CONTROLS" / "🟠 ISOLATED DEMONSTRATION
+     ENVIRONMENT" — the one-glance signal for which half of the page a viewer is
+     looking at, read before any other text on it. */
+  .modeBadge {
+    display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono);
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
+    padding: 3px 9px; border-radius: 3px; border: 1px solid var(--border-soft);
+  }
+  .modeBadge.live { color: var(--allow); border-color: var(--allow); }
+  .modeBadge.lab { color: #d99a4e; border-color: #d99a4e; }
+
+  /* "● ALL CONTROLS OPERATIONAL" — a single status line standing in for what used to
+     be eight separate paragraphs. */
+  .securityStatusLine {
+    display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 12px;
+    font-weight: 700; letter-spacing: 0.4px; color: var(--allow); margin: 10px 0 12px;
+  }
+  .securityStatusLine .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--allow); display: inline-block; box-shadow: 0 0 6px rgba(87,160,110,0.6); }
+
+  /* Compact control chips — title only (a native title="" tooltip carries the one-line
+     explanation on hover, never rendered as visible body text) — replaces the old
+     large-card grid with long paragraphs. */
+  .controlChips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 22px; }
+  .controlChip {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text);
+    border: 1px solid var(--border-soft); border-radius: 5px; padding: 6px 11px; background: rgba(13,10,6,0.55);
+    cursor: default;
+  }
+  .controlChip .tick { color: var(--allow); font-weight: 700; }
+
+  /* Lab isolation badges — four short checkmark facts replacing one paragraph. */
+  .labBadgeRow { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 0 16px; }
+  .labBadge { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-dim); }
+  .labBadge .tick { color: var(--allow); font-weight: 700; }
 
   .attackSummary { display: flex; gap: 32px; flex-wrap: wrap; margin: 18px 0; }
   .attackSummary .stat { display: flex; flex-direction: column; gap: 2px; min-width: 60px; }
@@ -560,7 +692,7 @@
   .chainNode .chainTop { display: flex; align-items: center; justify-content: space-between; }
   .chainRole { font-size: 11.5px; font-weight: 600; color: var(--text-dim); }
   .chainNode .lockBadge { color: var(--deny); font-size: 10px; font-weight: 700; letter-spacing: 0.3px; }
-  .chainNode .chainId { font-family: var(--mono); font-weight: 700; margin: 2px 0 6px; font-size: 13px; }
+  .chainNode .chainId { font-family: var(--mono); font-weight: 700; margin: 2px 0 6px; font-size: 13px; overflow-wrap: anywhere; }
   .chainNode .chainCaveats { font-family: var(--mono); font-size: 11px; color: var(--text-dim); line-height: 1.7; }
   .chainNode .narrowDiff { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); text-decoration: line-through; margin-top: 4px; line-height: 1.6; }
   .chainArrow { text-align: left; padding-left: 14px; color: var(--text-faint); font-size: 15px; padding-top: 2px; padding-bottom: 2px; }
@@ -578,6 +710,9 @@
   .integrityBig { font-family: var(--mono); font-size: 23px; font-weight: 700; padding: 18px; border-radius: 4px; text-align: center; letter-spacing: 0.3px; transition: background-color 250ms ease, color 250ms ease, border-color 250ms ease; border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.35); }
   .integrityBig.valid { color: var(--allow); background: rgba(87,160,110,0.10); border-color: var(--allow); }
   .integrityBig.invalid { color: var(--deny); background: rgba(193,92,86,0.10); border-color: var(--deny); }
+  /* Neutral — a check is in flight, or the check itself failed (auth/network). Never
+     green or red: this is deliberately NOT a claim about the ledger's integrity. */
+  .integrityBig.checking { color: var(--text-dim); background: rgba(120,110,90,0.08); border-color: var(--border-soft); }
 
   .heroLine { font-family: var(--mono); font-size: 19px; font-weight: 700; color: var(--text); }
 
@@ -628,7 +763,8 @@
     <div class="tagline">Bounded, revocable financial authority for autonomous agents.</div>
   </div>
   <div class="shellRight">
-    <div id="shellStatus" class="shellStatus"><span class="dot"></span><span id="shellStatusText">—</span></div>
+    <div id="aiProvenanceBadge" class="aiProvenanceBadge" style="display:none"></div>
+    <div id="shellStatus" class="shellStatus checking"><span class="dot"></span><span id="shellStatusText">—</span></div>
     <div id="principalBadge"></div>
   </div>
 </header>
@@ -653,20 +789,45 @@
     </ul>
   </div>
   <div class="surface">
-    <h2>Sign in</h2>
-    <label>Principal ID (new)</label>
-    <input id="newPrincipalId" placeholder="acme-corp" />
-    <div class="actionRow" style="margin-top:8px">
-      <button id="createPrincipalBtn">Create principal</button>
+    <h2>Sign in to Aegis</h2>
+    <div id="signInForm">
+      <label>Principal ID</label>
+      <input id="signInPrincipalId" placeholder="aryan" autocomplete="username" />
+      <label>API Key</label>
+      <input id="signInApiKey" type="password" placeholder="the API key issued for this identity" autocomplete="current-password" />
+      <div class="actionRow" style="margin-top:8px">
+        <button id="signInBtn">Sign in</button>
+      </div>
+      <p class="hint">Enter the Principal ID and API key issued for this identity.</p>
+      <div id="signInError" class="error"></div>
     </div>
-    <p class="hint">Creates a new principal and issues an API key — shown once, saved to this browser only.</p>
-    <hr style="border-color: var(--border); margin: 14px 0" />
-    <label>Existing API key</label>
-    <input id="existingApiKey" placeholder="paste an existing principal API key" />
-    <div class="actionRow" style="margin-top:8px">
-      <button id="useExistingKeyBtn" class="secondary">Use this key</button>
+
+    <div id="authDivider" class="authDivider"><span>or</span></div>
+
+    <div id="createPrincipalForm">
+      <h2>Create new principal</h2>
+      <label>New Principal ID</label>
+      <input id="newPrincipalId" placeholder="acme-corp" />
+      <div class="actionRow" style="margin-top:8px">
+        <button id="createPrincipalBtn" class="secondary">Create principal</button>
+      </div>
+      <p class="hint">Creates a new principal and issues an API key. Save the key securely when shown.</p>
+      <div id="createPrincipalError" class="error"></div>
     </div>
-    <div id="authError" class="error"></div>
+
+    <div id="issuedKeyPanel" style="display:none">
+      <h2>Save your API key</h2>
+      <p class="hint">This key is shown only once and cannot be retrieved again — store it somewhere safe.</p>
+      <div class="issuedKeyBox">
+        <div class="issuedKeyLabel">Principal ID</div>
+        <div id="issuedKeyPrincipalId" class="issuedKeyPrincipal"></div>
+        <div class="issuedKeyLabel">API Key</div>
+        <div id="issuedKeyValue" class="issuedKeyValue"></div>
+      </div>
+      <div class="actionRow" style="margin-top:10px">
+        <button id="issuedKeyContinueBtn">Continue to dashboard</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -678,6 +839,13 @@
         <div class="ovWordmark">AEGIS<span>.</span></div>
         <div class="ovSubtitle">Trust Mesh Console</div>
         <div class="ovStatement">Bounded. Revocable. Verifiable.</div>
+      </div>
+      <div class="demoScenarioBar">
+        <div>
+          <div class="demoScenarioTitle">Demo scenario</div>
+          <div class="hint" id="demoScenarioStatus">Creates a real agent, a real mission, and runs one approved and one denied transaction — through the actual backend pipeline.</div>
+        </div>
+        <button id="loadDemoScenarioBtn" class="secondary">Load demo scenario</button>
       </div>
       <div class="factGrid">
         <div class="factBlock goto" id="ovGotoAuthority">
@@ -730,10 +898,16 @@
               <input id="agentId" placeholder="agent-flights" />
               <label>Delegated goal</label>
               <textarea id="delegatedGoal" rows="2" placeholder="Book the cheapest flights for Q3 conferences"></textarea>
-              <label>Max amount (USD)</label>
-              <input id="maxAmount" type="number" value="2000" />
-              <label>Categories (comma-separated)</label>
-              <input id="categories" value="flights,hotels,software" />
+              <div class="row">
+                <div>
+                  <label>Max amount (USD)</label>
+                  <input id="maxAmount" type="number" value="2000" />
+                </div>
+                <div>
+                  <label>Categories (comma-separated)</label>
+                  <input id="categories" value="flights,hotels,software" />
+                </div>
+              </div>
               <label>Rails</label>
               <div class="row">
                 <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text)"><input type="checkbox" id="railStripe" checked style="width:auto" /> stripe_test</label>
@@ -787,10 +961,16 @@
                 <input id="missionCurrency" value="USD" />
               </div>
             </div>
-            <label>Allowed categories (comma-separated, blank = same as agent's token)</label>
-            <input id="missionCategories" placeholder="flights" />
-            <label>Approved counterparties (comma-separated, blank = unrestricted)</label>
-            <input id="missionCounterparties" placeholder="acme-airlines" />
+            <div class="row">
+              <div>
+                <label>Allowed categories (blank = same as token)</label>
+                <input id="missionCategories" placeholder="flights" />
+              </div>
+              <div>
+                <label>Approved counterparties (blank = unrestricted)</label>
+                <input id="missionCounterparties" placeholder="acme-airlines" />
+              </div>
+            </div>
             <label>Expires in (days)</label>
             <input id="missionExpiryDays" type="number" value="30" />
             <div class="actionRow" style="margin-top:10px">
@@ -858,7 +1038,12 @@
         <div class="wsMain">
           <div class="section surface">
             <h2>Decision inspector</h2>
-            <div id="result"></div>
+            <div id="result">
+              <div class="decisionEmpty">
+                <div class="chainSequence"><b>Mission</b><span class="sep">→</span><b>Capability</b><span class="sep">→</span><b>Policy</b><span class="sep">→</span><b>Risk</b><span class="sep">→</span><b>Decision</b><span class="sep">→</span><b>Execution</b></div>
+                <p>No transaction submitted yet. Run Simulate or Execute — each stage the request actually passed through, in order, appears here as it happens, straight from the backend's own decision.</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -867,19 +1052,44 @@
     <section class="workspace" id="wsSecurity">
       <div class="wsHero">
         <h2>Security</h2>
-        <div class="chainSequence"><b>Concurrent attack</b><span class="sep">·</span><b>Revocation</b></div>
-        <div class="hint">Real requests against the real pipeline — nothing simulated.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about how these results are produced">ⓘ</button><span class="infoPopover" role="tooltip">Every result below comes from real requests against the real, unmodified Aegis pipeline — not a canned recording.</span></span></div>
+        <div class="chainSequence"><b>Active controls</b><span class="sep">·</span><b>Demonstration lab</b></div>
+      </div>
+
+      <span class="modeBadge live">🟢 Live production controls</span>
+      <div class="securityStatusLine"><span class="dot"></span>ALL CONTROLS OPERATIONAL</div>
+      <div class="hint" style="margin-bottom:2px">Real controls enforced on every production transaction — not simulations.</div>
+      <div class="controlChips">
+        <span class="controlChip" title="Every agent token carries hard caveats — amount, categories, rails, expiry — checked before anything else runs."><span class="tick">✓</span>Capability Authority</span>
+        <span class="controlChip" title="Attenuating a token can only shrink its authority — never widen it, enforced at mint time."><span class="tick">✓</span>Narrowing Delegation</span>
+        <span class="controlChip" title="A mission's spend is bounded by an atomic budget reservation, independent of the agent's own token caveats."><span class="tick">✓</span>Mission Budget</span>
+        <span class="controlChip" title="Budget reservation is one atomic SQL update — concurrent attempts can never collectively overspend it."><span class="tick">✓</span>Concurrent Safety</span>
+        <span class="controlChip" title="Revoking an agent invalidates it and every descendant delegated beneath it, instantly and provably."><span class="tick">✓</span>Cascading Revocation</span>
+        <span class="controlChip" title="A capability/policy denial short-circuits before risk assessment ever runs — AI judgment cannot override it."><span class="tick">✓</span>Deterministic DENY</span>
+        <span class="controlChip" title="Intent-consistency and behavioral-baseline flags both escalate for human review — neither can turn a denial into an allow."><span class="tick">✓</span>Risk Escalation</span>
+        <span class="controlChip" title="Every decision is hash-chained and signed — see the Evidence workspace for live, read-only verification."><span class="tick">✓</span>Tamper-Evident Evidence</span>
+      </div>
+
+      <span class="modeBadge lab">🟠 Isolated demonstration environment</span>
+      <div class="theatreTitle" style="margin-top:6px">
+        <h2>Security Demonstration Lab</h2>
+        <div class="hint">Interactive attack scenarios — proving the controls above under real attack conditions.</div>
+      </div>
+      <div class="labBadgeRow">
+        <span class="labBadge"><span class="tick">✓</span>Separate database</span>
+        <span class="labBadge"><span class="tick">✓</span>Separate identities</span>
+        <span class="labBadge"><span class="tick">✓</span>Separate signing keys</span>
+        <span class="labBadge"><span class="tick">✓</span>Cannot affect production evidence</span>
       </div>
       <section id="demoTheatre">
         <div class="theatreGrid">
 
           <div class="theatreCol">
             <h2>Concurrent budget race</h2>
-            <div class="hint">20 concurrent attempts against one bounded budget.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about the concurrent budget race">ⓘ</button><span class="infoPopover" role="tooltip">A real attack on the real atomic reservation primitive — allowed, blocked, and zero overspend are all decided under genuine concurrent contention, not simulated.</span></span></div>
+            <div class="hint">20 concurrent attempts against one bounded budget.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about the concurrent budget race">ⓘ</button><span class="infoPopover" role="tooltip">A real attack on the real atomic reservation primitive, running in the isolated lab — allowed, blocked, and zero overspend are all decided under genuine concurrent contention, not simulated.</span></span></div>
             <div class="actionRow" style="margin-top:10px">
               <button id="attackNewMissionBtn" class="secondary">New attack mission ($2,000)</button>
             </div>
-            <div id="attackMissionInfo" class="hint" style="margin-top:6px">Select an agent, then create an attack mission.</div>
+            <div id="attackMissionInfo" class="hint" style="margin-top:6px">Create an attack mission to begin — a lab agent is created automatically.</div>
             <div class="actionRow" style="margin-top:8px">
               <!-- Label text is set by app.js from ATTACK_ATTEMPT_COUNT/ATTACK_AMOUNT_MINOR_UNITS
                    — the same constants fireOne() uses to fire the real requests. -->
@@ -899,7 +1109,7 @@
 
           <div class="theatreCol">
             <h2>Delegation &amp; revocation</h2>
-            <div class="hint">Revoking a node cuts off everything beneath it, instantly.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about revocation">ⓘ</button><span class="infoPopover" role="tooltip">Authority narrows at every level of delegation and can never widen — revocation is instant and provable, not eventually-consistent.</span></span></div>
+            <div class="hint">Revoking a node cuts off everything beneath it, instantly.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about revocation">ⓘ</button><span class="infoPopover" role="tooltip">Authority narrows at every level of delegation and can never widen — revocation is instant and provable, not eventually-consistent. Runs in the isolated lab.</span></span></div>
             <div class="actionRow" style="margin-top:10px">
               <button id="revocationRunBtn">Run scenario</button>
             </div>
@@ -907,9 +1117,23 @@
             <div id="revocationResults"></div>
           </div>
 
+          <div class="theatreCol">
+            <h2>Ledger tamper &amp; recovery</h2>
+            <div class="hint">Corruption is detected and persists until explicitly acknowledged.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about tamper detection and recovery">ⓘ</button><span class="infoPopover" role="tooltip">This corrupts the lab's own isolated ledger directly in storage, bypassing Aegis entirely — the same hash-chain detection used for real evidence. The violation stays visible across refresh until a human explicitly acknowledges and restores the isolated lab.</span></span></div>
+            <div id="labIntegrityStatus" class="integrityBig checking" style="font-size:16px;padding:12px">Checking…</div>
+            <div class="row" style="margin-top:10px">
+              <button id="labIntegrityCheckBtn" class="secondary">Verify chain</button>
+              <button id="labIntegrityTamperBtn" class="danger">Tamper latest entry</button>
+            </div>
+            <div id="labIntegrityExplain" class="hint" style="margin-top:8px"></div>
+            <div class="actionRow" style="margin-top:14px">
+              <button id="labRecoverBtn" class="secondary">🔐 Acknowledge &amp; Restore Demonstration State</button>
+            </div>
+            <div id="labRecoverExplain" class="hint" style="margin-top:8px"></div>
+          </div>
+
         </div>
       </section>
-      <div id="securityProdNote" class="hint" style="display:none">Live security demonstrations (concurrent budget race, revocation) run in demo mode. This deployment is in production mode — see the Evidence workspace for ledger verification, which always runs regardless of mode.</div>
     </section>
 
     <section class="workspace" id="wsEvidence">
@@ -921,18 +1145,17 @@
       <div class="evidenceFlow">
         <div class="evidenceStage">
           <div class="chainRole">Live ledger</div>
-          <div id="chainStatus">—</div>
+          <div id="chainStatus" class="checking">Checking…</div>
           <button id="refreshLedgerBtn" class="secondary">Refresh</button>
           <div id="ledgerEntries"></div>
         </div>
         <div class="chainArrow">↓</div>
         <div class="evidenceStage">
           <div class="chainRole">Integrity check</div>
-          <div class="hint" style="margin-bottom:8px">Tampering with stored data directly is still detected.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about integrity checking">ⓘ</button><span class="infoPopover" role="tooltip">Every decision is hash-chained and signed — corrupting stored data directly in the database, bypassing Aegis entirely, is still caught.</span></span></div>
-          <div id="integrityStatus" class="integrityBig valid">✓ HASH CHAIN VERIFIED</div>
+          <div class="hint" style="margin-bottom:8px">This is real production evidence — read-only. Tampering is demonstrated separately, against an isolated ledger, in the Security workspace's Demonstration Lab.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about integrity checking">ⓘ</button><span class="infoPopover" role="tooltip">Every decision here is hash-chained and signed. This production ledger has no tamper route reachable over HTTP, in any server mode — corrupting stored data directly in the database would still be caught, but is only ever demonstrated against the isolated lab ledger.</span></span></div>
+          <div id="integrityStatus" class="integrityBig checking">Checking…</div>
           <div class="row" style="margin-top:10px">
             <button id="integrityCheckBtn" class="secondary">Verify chain</button>
-            <button id="integrityTamperBtn" class="danger">Tamper latest entry</button>
           </div>
           <div id="integrityExplain" class="hint" style="margin-top:8px"></div>
         </div>
