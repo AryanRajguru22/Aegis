@@ -2287,7 +2287,16 @@ async function attackCreateMission() {
           currency: "USD",
           categories: [ATTACK_CATEGORY],
           rails: [ATTACK_RAIL],
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          // 365 days, matching every other lab/demo agent token in this file
+          // (loadDemoScenario(), the revocation scenario below) — deliberately far
+          // longer than the mission's own 24h expiresAt below. validateMissionAgainstToken
+          // (src/mission/policy.ts) requires mission.expiresAt <= token.expiresAt, and
+          // these two values are computed from separate Date.now() calls straddling an
+          // awaited network round-trip (the /lab/agents POST just below) — giving the
+          // token a duration this much longer than the mission's makes the ordering hold
+          // regardless of how long that round-trip actually takes, rather than relying on
+          // both calls landing in the same millisecond.
+          expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
         },
       },
     });

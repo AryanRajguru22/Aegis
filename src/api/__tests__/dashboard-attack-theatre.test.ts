@@ -282,6 +282,141 @@ function loadAttackTheatreContext() {
   };
 }
 
+/**
+ * attackCreateMission() itself (as opposed to launchBudgetAttack() above, which
+ * assumes a mission/agent already exist) mints a lab agent token, then registers a
+ * mission under it — both via separate, real `await`-ed POST calls. Each call
+ * independently computes its own `expiresAt` from `Date.now()` at the moment it
+ * builds its request body, so any real wall-clock time elapsed between the two calls
+ * (a slow network round-trip, a busy event loop, anything) changes the gap between
+ * them. `validateMissionAgainstToken` (src/mission/policy.ts) rejects a mission whose
+ * expiresAt is later than its token's — so the two durations must be chosen far
+ * enough apart that no realistic delay between the two calls can invert that
+ * ordering. This deliberately introduces a real (not simulated) delay between the two
+ * calls — via a genuine setTimeout, not a synchronously-resolved promise — to prove
+ * the fix holds under actual elapsed time, the exact condition that broke the
+ * previous 24h/24h version of this function.
+ */
+function loadAttackCreateMissionContext() {
+  const src = fs.readFileSync(APP_JS_PATH, "utf8");
+  const elementsById = new Map<string, FakeElement>();
+  for (const id of ["attackMissionInfo", "attackVerified"]) {
+    elementsById.set(id, makeFakeElement("div"));
+  }
+
+  const calls: DeferredCall[] = [];
+  const fakeFetch = (url: string, init: { method?: string; body?: string } = {}) => {
+    return new Promise((resolve) => {
+      calls.push({ url, init, resolve: resolve as DeferredCall["resolve"] });
+    });
+  };
+
+  const fakeDocument = {
+    createElement: (tag: string) => makeFakeElement(tag),
+    createTextNode: (text: string): FakeTextNode => ({ nodeType: 3, data: String(text) }),
+    getElementById: (id: string) => {
+      if (!elementsById.has(id)) elementsById.set(id, makeFakeElement("div"));
+      return elementsById.get(id)!;
+    },
+  };
+
+  const context = vm.createContext({
+    document: fakeDocument,
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    fetch: fakeFetch,
+    console,
+    crypto: { randomUUID: () => `uuid-${Math.random()}` },
+    confirm: () => false,
+  });
+  // Pre-seed state.lab so labApi()'s ensureLabIdentity() skips its own
+  // POST /lab/principals bootstrap call — same technique loadAttackTheatreContext()
+  // above uses, isolating this test to exactly the two calls attackCreateMission()
+  // itself makes (/lab/agents, then /lab/missions).
+  vm.runInContext(`${src}\nstate.lab = { principalId: "lab-x", apiKey: "lab-key-x" };`, context, { filename: "app.js" });
+
+  return {
+    elementsById,
+    calls,
+    attackCreateMission: (context as unknown as { attackCreateMission: () => Promise<void> }).attackCreateMission,
+  };
+}
+
+describe("attackCreateMission() — the agent token must always outlive the mission, even under a real delay between the two setup calls", () => {
+  test("a real ~50ms delay between minting the agent token and registering the mission still leaves mission.expiresAt <= token.expiresAt, and the mission is created successfully", async () => {
+    const { elementsById, calls, attackCreateMission } = loadAttackCreateMissionContext();
+
+    const run = attackCreateMission();
+
+    // labApi() awaits ensureLabIdentity() first — an async function whose early
+    // return (state.lab.apiKey is already seeded above) still defers by one
+    // microtask tick, so the actual fetch() for /lab/agents isn't registered until
+    // after that tick flushes, not synchronously within this same call.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The /lab/agents POST must be the first call made.
+    assert.equal(calls.length, 1, "attackCreateMission must issue exactly one call before awaiting the agent response");
+    assert.match(calls[0]!.url, /^\/lab\/agents$/);
+    const agentBody = JSON.parse(calls[0]!.init.body!);
+    const tokenExpiresAt = agentBody.caveats.expiresAt;
+
+    // A genuine, real delay — not a synchronously-resolved promise — so real
+    // wall-clock time actually elapses between the two Date.now() calls in
+    // attackCreateMission(), exactly like a real network round-trip would.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    calls[0]!.resolve(fakeJsonResponse({ agentId: "lab-agent-test", token: "fake-token" }));
+
+    // Let the resolved promise's continuation (the mission POST) actually run.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(calls.length, 2, "the /lab/missions POST must follow, after the real delay above");
+    assert.match(calls[1]!.url, /^\/lab\/missions$/);
+    const missionBody = JSON.parse(calls[1]!.init.body!);
+    const missionExpiresAt = missionBody.expiresAt;
+
+    calls[1]!.resolve(fakeJsonResponse({ missionId: missionBody.missionId }));
+    await run;
+
+    assert.ok(
+      new Date(missionExpiresAt).getTime() <= new Date(tokenExpiresAt).getTime(),
+      `mission.expiresAt (${missionExpiresAt}) must not be later than the token's expiresAt (${tokenExpiresAt}), ` +
+        `even after a real delay between the two calls that produced them`
+    );
+
+    // The UI must reflect success, not the "Failed to create attack mission: Mission
+    // error: mission expiresAt (...) is later than the agent token's expiresAt (...)"
+    // regression this test exists to catch.
+    const infoText = elementsById.get("attackMissionInfo")!.textContent;
+    assert.match(infoText, /ready/i);
+    assert.doesNotMatch(infoText, /Failed to create attack mission/);
+    assert.doesNotMatch(infoText, /Mission error/);
+  });
+
+  test("the token's expiresAt is far longer than the mission's — the same 365-day-token/24-hour-mission convention already used by loadDemoScenario() and the revocation scenario elsewhere in this file", async () => {
+    const { calls, attackCreateMission } = loadAttackCreateMissionContext();
+
+    const run = attackCreateMission();
+    await new Promise((resolve) => setTimeout(resolve, 0)); // see the timing note in the test above
+    const agentBody = JSON.parse(calls[0]!.init.body!);
+    calls[0]!.resolve(fakeJsonResponse({ agentId: "lab-agent-test", token: "fake-token" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const missionBody = JSON.parse(calls[1]!.init.body!);
+    calls[1]!.resolve(fakeJsonResponse({ missionId: missionBody.missionId }));
+    await run;
+
+    const tokenDurationMs = new Date(agentBody.caveats.expiresAt).getTime() - Date.now();
+    const missionDurationMs = new Date(missionBody.expiresAt).getTime() - Date.now();
+
+    // Generous bounds (not exact-millisecond equality, since Date.now() is read
+    // independently at each call site) proving the token's duration is on the order
+    // of a year and the mission's is on the order of a day — not the same duration
+    // the original bug used for both.
+    assert.ok(tokenDurationMs > 300 * 24 * 60 * 60 * 1000, "token expiry should be on the order of a year");
+    assert.ok(missionDurationMs < 2 * 24 * 60 * 60 * 1000, "mission expiry should be on the order of a day");
+    assert.ok(tokenDurationMs > missionDurationMs, "the token must outlive the mission");
+  });
+});
+
 describe("Scenario A — launchBudgetAttack()'s final counters and verification text are derived from real responses, never hardcoded", () => {
   test("an UNUSUAL allow/deny split (3 allowed, 17 blocked — NOT the naturally-expected 13/7) is reflected exactly in the rendered counters, and the final verification text comes from the real /missions/:id response, not client math", async () => {
     const { elementsById, calls, launchBudgetAttack } = loadAttackTheatreContext();
