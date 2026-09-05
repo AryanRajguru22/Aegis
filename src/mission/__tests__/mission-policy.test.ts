@@ -108,12 +108,13 @@ describe("validateMissionAgainstToken — a mission may only narrow a token, nev
   });
 });
 
-function activeMission(overrides: Partial<Pick<MissionRecord, "status" | "approvedCounterparties" | "allowedCategories" | "budgetMinorUnits">> = {}) {
+function activeMission(overrides: Partial<Pick<MissionRecord, "status" | "approvedCounterparties" | "allowedCategories" | "budgetMinorUnits" | "currency">> = {}) {
   return {
     status: "active" as const,
     approvedCounterparties: ["cloudcredits-vendor"],
     allowedCategories: ["api_credits"],
     budgetMinorUnits: 200_000,
+    currency: "USD",
     ...overrides,
   };
 }
@@ -243,5 +244,53 @@ describe("checkMissionGate — adversarial: cumulative budget", () => {
     // not, to remain pure).
     const second = checkMissionGate(mission, candidate({ amountMinorUnits: 60_000 }), 150_000);
     assert.equal(second.allowed, false);
+  });
+});
+
+describe("checkMissionGate — budget-exceeded reason formats money for a human reader, not raw minor units", () => {
+  test("$2400 requested against a $2000 budget with nothing spent yet: reason shows 2400.00/2000.00 USD, never the raw 240000/200000", () => {
+    const result = checkMissionGate(
+      activeMission({ budgetMinorUnits: 200_000, currency: "USD" }),
+      candidate({ amountMinorUnits: 240_000 }),
+      0
+    );
+    assert.equal(result.allowed, false);
+    assert.equal(
+      result.reason,
+      "Transaction would exceed this mission's budget (spent so far: 0.00 USD, requested: 2400.00 USD, budget: 2000.00 USD)"
+    );
+    assert.doesNotMatch(result.reason ?? "", /240000/);
+    assert.doesNotMatch(result.reason ?? "", /200000/);
+  });
+
+  test("a non-zero prior spend is also formatted as a decimal amount, not raw minor units", () => {
+    const result = checkMissionGate(
+      activeMission({ budgetMinorUnits: 200_000, currency: "USD" }),
+      candidate({ amountMinorUnits: 38_000 }),
+      180_000
+    );
+    assert.equal(result.allowed, false);
+    assert.equal(
+      result.reason,
+      "Transaction would exceed this mission's budget (spent so far: 1800.00 USD, requested: 380.00 USD, budget: 2000.00 USD)"
+    );
+  });
+
+  test("the mission's own currency is used, not a hardcoded one", () => {
+    const result = checkMissionGate(
+      activeMission({ budgetMinorUnits: 100_000, currency: "INR" }),
+      candidate({ amountMinorUnits: 150_000 }),
+      0
+    );
+    assert.equal(result.allowed, false);
+    assert.match(result.reason ?? "", /1500\.00 INR/);
+    assert.match(result.reason ?? "", /1000\.00 INR/);
+  });
+
+  test("the comparison itself is unaffected by the display fix: a request that fits exactly at the boundary is still allowed, and denial/allowed outcomes are unchanged from raw-minor-unit arithmetic", () => {
+    const exact = checkMissionGate(activeMission({ budgetMinorUnits: 200_000 }), candidate({ amountMinorUnits: 200_000 }), 0);
+    assert.equal(exact.allowed, true);
+    const overByOne = checkMissionGate(activeMission({ budgetMinorUnits: 200_000 }), candidate({ amountMinorUnits: 200_001 }), 0);
+    assert.equal(overByOne.allowed, false);
   });
 });

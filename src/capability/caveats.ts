@@ -68,10 +68,16 @@ export function validateCaveats(c: Caveats): void {
  * "widening" test in the test suite), so even a caller that bypassed this function
  * could never produce a token with broader effective authority than its parent.
  */
+/** Integer minor units (e.g. cents) -> a human-readable decimal string, for error messages only — never for the actual comparison above, which stays on the raw integer. Matches the same `(minorUnits / 100).toFixed(2)` convention already used in src/risk/anthropicJudge.ts and src/risk/geminiJudge.ts. */
+function formatMinorUnits(minorUnits: number): string {
+  return (minorUnits / 100).toFixed(2);
+}
+
 export function validateAttenuation(parent: Caveats, child: Caveats): void {
   if (child.maxAmountMinorUnits > parent.maxAmountMinorUnits) {
     throw new Error(
-      `Attenuation error: child maxAmountMinorUnits (${child.maxAmountMinorUnits}) exceeds parent's (${parent.maxAmountMinorUnits})`
+      `Attenuation error: child maxAmountMinorUnits (${formatMinorUnits(child.maxAmountMinorUnits)} ${child.currency}) ` +
+        `exceeds parent's (${formatMinorUnits(parent.maxAmountMinorUnits)} ${parent.currency})`
     );
   }
   if (child.currency !== parent.currency) {

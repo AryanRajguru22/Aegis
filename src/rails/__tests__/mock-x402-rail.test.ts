@@ -77,6 +77,29 @@ describe("MockX402RailAdapter — client-side defense in depth", () => {
     );
   });
 
+  test("the refusal message formats money for a human reader (380.00 USD / 299.00 USD), never the raw minor units (38000 / 29900)", async () => {
+    const { privateKey, publicKey } = generatePayerKeyPair();
+    const knownPayers = new Map([[AGENT_ID, publicKeyToHex(publicKey)]]);
+
+    await withServer(
+      { knownPayers, priceResolver: () => ({ amountMinorUnits: 38_000, currency: "USD" }) },
+      async (server) => {
+        const adapter = new MockX402RailAdapter({ baseUrl: server.url, privateKey });
+        // Authorized for 29900 minor units ($299.00); the counterparty quotes 38000
+        // ($380.00) — the same mismatch used to originally report this formatting bug.
+        const result = await adapter.execute(baseRequest({ amountMinorUnits: 29_900 }));
+
+        assert.equal(result.success, false);
+        assert.equal(
+          result.error,
+          "Counterparty quoted 380.00 USD, which does not match the 299.00 USD this transaction was authorized for — refusing to pay"
+        );
+        assert.doesNotMatch(result.error ?? "", /38000/);
+        assert.doesNotMatch(result.error ?? "", /29900/);
+      }
+    );
+  });
+
   test("refuses to pay when the counterparty quotes a different currency", async () => {
     const { privateKey, publicKey } = generatePayerKeyPair();
     const knownPayers = new Map([[AGENT_ID, publicKeyToHex(publicKey)]]);

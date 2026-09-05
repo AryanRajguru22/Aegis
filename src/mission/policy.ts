@@ -85,8 +85,13 @@ export function validateMissionAgainstToken(
  * intentional limitation of this function alone, not of the mission system as a
  * whole once the reconciliation step exists.
  */
+/** Integer minor units (e.g. cents) -> a human-readable decimal string, for error messages only — never for the actual budget comparison below, which stays on the raw integer. Matches the same `(minorUnits / 100).toFixed(2)` convention already used in src/risk/anthropicJudge.ts and src/risk/geminiJudge.ts. */
+function formatMinorUnits(minorUnits: number): string {
+  return (minorUnits / 100).toFixed(2);
+}
+
 export function checkMissionGate(
-  mission: Pick<MissionRecord, "status" | "approvedCounterparties" | "allowedCategories" | "budgetMinorUnits">,
+  mission: Pick<MissionRecord, "status" | "approvedCounterparties" | "allowedCategories" | "budgetMinorUnits" | "currency">,
   candidateTransaction: MissionCandidateTransaction,
   spentSoFar: number
 ): MissionGateResult {
@@ -111,7 +116,10 @@ export function checkMissionGate(
   if (spentSoFar + candidateTransaction.amountMinorUnits > mission.budgetMinorUnits) {
     return {
       allowed: false,
-      reason: `Transaction would exceed this mission's budget (spent so far: ${spentSoFar}, requested: ${candidateTransaction.amountMinorUnits}, budget: ${mission.budgetMinorUnits})`,
+      reason:
+        `Transaction would exceed this mission's budget (spent so far: ${formatMinorUnits(spentSoFar)} ${mission.currency}, ` +
+        `requested: ${formatMinorUnits(candidateTransaction.amountMinorUnits)} ${mission.currency}, ` +
+        `budget: ${formatMinorUnits(mission.budgetMinorUnits)} ${mission.currency})`,
     };
   }
 

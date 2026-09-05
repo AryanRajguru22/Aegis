@@ -187,6 +187,38 @@ describe("attenuation (sub-agent delegation)", () => {
     );
   });
 
+  test("the widening-rejection message formats money for a human reader (9999.99/2000.00 USD), never the raw minor units (999999/200000)", () => {
+    const { privateKey, publicKey } = generateRootKeyPair();
+    const rootCaveats = conferenceTravelCaveats(); // $2,000.00 cap
+    const rootToken = issueRootToken(
+      { principalId: "principal-1", agentId: "agent-root", delegatedGoal: "Book conference travel", caveats: rootCaveats },
+      privateKey
+    );
+
+    assert.throws(
+      () =>
+        attenuateToken(
+          {
+            parentTokenBase64: rootToken,
+            parentCaveats: rootCaveats,
+            agentId: "agent-sub",
+            caveats: conferenceTravelCaveats({ maxAmountMinorUnits: 999_999 }), // wider than parent
+          },
+          publicKey
+        ),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(
+          error.message,
+          "Attenuation error: child maxAmountMinorUnits (9999.99 USD) exceeds parent's (2000.00 USD)"
+        );
+        assert.doesNotMatch(error.message, /999999/);
+        assert.doesNotMatch(error.message, /200000/);
+        return true;
+      }
+    );
+  });
+
   test("even a block that bypasses application-level validation and asserts a wider limit cannot escape the parent's cap — the cryptographic guarantee, not just the app check", () => {
     // This test deliberately reaches past attenuateToken()'s validateAttenuation guard
     // and hand-builds a "malicious" wider block the way a buggy or compromised caller

@@ -31,6 +31,21 @@ describe("scoreDeviation", () => {
     assert.equal(flags[0]?.code, "amount_deviation");
   });
 
+  test("the amount-deviation detail formats money for a human reader ($50.00 / $10.00), never the raw minor units (5000 / 1000)", () => {
+    const history = [
+      { amountMinorUnits: 1_000, createdAt: "2025-01-01T00:00:00.000Z" },
+      { amountMinorUnits: 1_000, createdAt: "2025-01-02T00:00:00.000Z" },
+      { amountMinorUnits: 1_000, createdAt: "2025-01-03T00:00:00.000Z" },
+    ];
+    const flags = scoreDeviation(history, { amountMinorUnits: 5_000, now: NOW }, DEFAULT_BASELINE_WINDOW);
+    assert.equal(
+      flags[0]?.detail,
+      "Amount ($50.00) is 5.0x this agent's historical average ($10.00), over the 3x threshold"
+    );
+    assert.doesNotMatch(flags[0]?.detail ?? "", /\b5000\b/);
+    assert.doesNotMatch(flags[0]?.detail ?? "", /\b1000\b/);
+  });
+
   test("amount just under the multiplier threshold is not flagged", () => {
     const history = [
       { amountMinorUnits: 1_000, createdAt: "2025-01-01T00:00:00.000Z" },

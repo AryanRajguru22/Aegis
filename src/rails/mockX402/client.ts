@@ -49,9 +49,11 @@ export class MockX402RailAdapter implements RailAdapter {
       if (requirements.amountMinorUnits !== request.amountMinorUnits || requirements.currency !== request.currency) {
         // Defense-in-depth, not merchant trust: never pay more (or in a different
         // currency) than what Aegis's policy and risk engines already approved, even
-        // if the counterparty's own quote says otherwise.
+        // if the counterparty's own quote says otherwise. The comparison itself is
+        // still done on the raw integer minor units above — only the message below is
+        // formatted for a human reader.
         return this.failure(
-          `Counterparty quoted ${requirements.amountMinorUnits} ${requirements.currency}, which does not match the ${request.amountMinorUnits} ${request.currency} this transaction was authorized for — refusing to pay`,
+          `Counterparty quoted ${formatMinorUnits(requirements.amountMinorUnits)} ${requirements.currency}, which does not match the ${formatMinorUnits(request.amountMinorUnits)} ${request.currency} this transaction was authorized for — refusing to pay`,
           requirements
         );
       }
@@ -103,6 +105,11 @@ export class MockX402RailAdapter implements RailAdapter {
       clearTimeout(timer);
     }
   }
+}
+
+/** Integer minor units (e.g. cents) -> a human-readable decimal string, for error messages only — never for the actual amount comparison above, which stays on the raw integer. Matches the same `(minorUnits / 100).toFixed(2)` convention already used in src/risk/anthropicJudge.ts and src/risk/geminiJudge.ts. */
+function formatMinorUnits(minorUnits: number): string {
+  return (minorUnits / 100).toFixed(2);
 }
 
 async function safeJson(res: Response): Promise<unknown> {

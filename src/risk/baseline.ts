@@ -55,7 +55,12 @@ export function scoreDeviation(
     if (mean > 0 && attempt.amountMinorUnits > mean * window.amountDeviationMultiplier) {
       flags.push({
         code: "amount_deviation",
-        detail: `Amount (${attempt.amountMinorUnits}) is ${(attempt.amountMinorUnits / mean).toFixed(1)}x this agent's historical average (${Math.round(mean)}), over the ${window.amountDeviationMultiplier}x threshold`,
+        // No currency is available at this layer (HistoricalTransaction/attempt carry
+        // only amountMinorUnits — see this file's own types above), so this formats as
+        // a bare dollar amount, matching the same no-currency-parameter convention
+        // already used by verifier/report.ts's fmtMoney(). The comparison above still
+        // runs on the raw integer minor units — only this message is formatted.
+        detail: `Amount ($${(attempt.amountMinorUnits / 100).toFixed(2)}) is ${(attempt.amountMinorUnits / mean).toFixed(1)}x this agent's historical average ($${(mean / 100).toFixed(2)}), over the ${window.amountDeviationMultiplier}x threshold`,
       });
     }
   }
