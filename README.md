@@ -98,6 +98,16 @@ already-settled ≥ requested amount`, checked and reserved in one write, inside
 transaction. This is what makes it safe under many simultaneous requests, not just
 correct when tested one at a time.
 
+**Missions are mandatory once assigned.** An agent that has ever been assigned a
+mission (any status) must name one of its missions in every `/simulate` and
+`/transactions` request; a request that omits `missionId` is denied by the mission
+layer. Cancelling, completing or expiring every mission does **not** restore
+mission-less spending — only a new mission does. Agents that were never assigned a
+mission keep plain token authority. A mission that does not exist and a mission
+belonging to another agent or principal are indistinguishable (`404`). Because the
+rule is derived from the missions table, it needs no migration and applies to
+existing agents as soon as it is deployed.
+
 ### Idempotency / crash safety
 
 Every transaction requires an idempotency key. A retried request with the same key

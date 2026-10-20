@@ -292,7 +292,7 @@ describe("POST /simulate — optional missionId, dry-run only", () => {
     assert.equal(res.status, 400);
   });
 
-  test("a mission not owned by the simulating agent is rejected with 403", async () => {
+  test("a mission not owned by the simulating agent is rejected with a uniform 404 (same as a nonexistent mission)", async () => {
     const { app } = buildHarness();
     const apiKey = await registerPrincipal(app, "acme-corp");
     await registerAgent(app, apiKey, "agent-owner");
@@ -303,6 +303,6 @@ describe("POST /simulate — optional missionId, dry-run only", () => {
       .post("/simulate")
       .set("Authorization", `Bearer ${otherToken}`)
       .send({ transaction: defaultTransaction({ category: "flights" }), counterparty: "acme-airlines", missionId: "mission-1" });
-    assert.equal(res.status, 403);
+    assert.equal(res.status, 404);
   });
 });

@@ -128,7 +128,15 @@ export function parseTransactionBody(body: unknown): TransactionRequest & { purp
   };
 }
 
-/** Optional — a POST /transactions request with no "missionId" behaves exactly as it always has. */
+/**
+ * Optional at the parsing layer only — whether a request MAY omit it is decided by
+ * routes/transactions.ts (an agent that has ever been assigned a mission must always
+ * name one). When present it must have the exact shape mission creation enforces
+ * (assertValidIdentifier), so a value that could never name a real mission — wrong
+ * type, over-long, quotes, whitespace, path-like — is a 400 here, before any lookup,
+ * and is never echoed back or passed on to the store. An explicit `null` is NOT the
+ * same as omitted: it is rejected, so it cannot be used to dodge the mission rule.
+ */
 export function parseOptionalMissionId(body: unknown): string | undefined {
   if (!isPlainObject(body)) {
     throw new ApiError(400, "Request body must be a JSON object");
@@ -139,6 +147,11 @@ export function parseOptionalMissionId(body: unknown): string | undefined {
   }
   if (typeof value !== "string" || value.length === 0) {
     throw new ApiError(400, `Field "missionId", if present, must be a non-empty string`);
+  }
+  try {
+    assertValidIdentifier(value, "missionId");
+  } catch {
+    throw new ApiError(400, `Field "missionId" is malformed (max 64 chars, alphanumeric/._:- only)`);
   }
   return value;
 }

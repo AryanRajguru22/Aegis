@@ -35,6 +35,19 @@ concurrent-budget-race scenario, which fires 20 real, concurrent `POST /transact
 calls against one $2,000 mission and asserts, from the server's own re-fetched state,
 that authorized spend never exceeds the budget.
 
+**Mission-required invariant (sticky).** Budget enforcement only binds if it cannot be
+skipped, so it is not optional per request: once an agent has been assigned any mission
+(a row in `missions`, any status), every `/simulate` and `/transactions` call for it
+must name a mission, and the same rule applies to both. Ending all of its missions does
+not restore unrestricted mission-less spending. The property is derived from the
+`missions` table (rows are never deleted), so it is durable across restarts and applies
+to legacy agents without a migration. Unknown and not-yours mission ids return an
+identical `404`; malformed ids return `400`.
+*Limitation:* a mission-less request already past this check and awaiting the intent
+judge when an agent's first mission is created is not re-checked before it reaches the
+rail (tracked as F5). Spend recorded before this rule existed is not rewritten, and the
+independent verifier does not yet report it (tracked as the F1 verifier work).
+
 ## 4. Revocation
 
 Revoking an agent (`POST /agents/:id/revoke`) marks that token's identifier revoked.

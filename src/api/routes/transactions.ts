@@ -122,6 +122,50 @@ function reconcileMissionExpiry(deps: AppDependencies, mission: MissionRecord): 
   return mission;
 }
 
+/**
+ * The sticky "mission-required" rule (audit finding F1). Mission enforcement used to
+ * be opt-in per request: a caller that simply omitted `missionId` skipped the mission
+ * gate AND the atomic budget reservation entirely and could spend past a mission's
+ * cumulative budget. The invariant enforced here instead is: once an agent has EVER
+ * been assigned a mission — a row in `missions`, in any status — every simulate and
+ * execute for that agent must name a mission. Cancelling, completing or expiring all
+ * of its missions does not restore mission-less spending; only a NEW mission (named
+ * explicitly) does.
+ *
+ * Persistence: the flag is not stored anywhere separately. It is derived, on every
+ * request, from the missions table itself, whose rows are never deleted (no route or
+ * store method removes one). That makes it durable across restarts, impossible to
+ * clear through the API, and automatically correct for legacy databases that already
+ * contain missions — no column, no migration, no backfill. Read-only by design: it
+ * neither reconciles expiry nor writes anything.
+ *
+ * Out of scope here (see the F5 pre-rail recheck): a mission-less request that had
+ * already passed this check before the agent's first mission was created, and is
+ * still awaiting the intent judge, is not re-checked before it reaches the rail.
+ */
+type MissionBinding =
+  | { bound: false }
+  | { bound: true; reason: string; activeMissionCount: number };
+
+function evaluateMissionBinding(deps: AppDependencies, agentId: string): MissionBinding {
+  const missions = deps.missions.listByAgent(agentId);
+  if (missions.length === 0) {
+    return { bound: false };
+  }
+  const now = Date.now();
+  const activeMissionCount = missions.filter((m) => m.status === "active" && new Date(m.expiresAt).getTime() > now).length;
+  const reason =
+    activeMissionCount > 0
+      ? 'This agent is bound to missions: every transaction must name one of its active missions via "missionId"'
+      : "This agent has been assigned a mission and may only spend under an active mission, but none is currently active (cancelled, completed or expired) — create a new mission and pass its \"missionId\"";
+  return { bound: true, reason, activeMissionCount };
+}
+
+/** Message for BOTH "no such mission" and "a mission that is not yours": identical on purpose, so a caller guessing ids learns nothing from the difference. */
+function missionNotFoundMessage(missionId: string): string {
+  return `Mission "${missionId}" not found`;
+}
+
 function evaluateMissionGate(
   deps: AppDependencies,
   agent: { agentId: string; principalId: string; caveats: Record<string, unknown> },
@@ -205,11 +249,30 @@ export function createTransactionsRouter(deps: AppDependencies, requireAgent: Re
 
     let delegatedGoal = agent.delegatedGoal;
 
-    // Backwards compatible: a request with no missionId behaves exactly as /simulate
-    // always has. A dry run — no reservation is ever attempted here (see
+    // A request with no missionId is only allowed for an agent that has never been
+    // assigned a mission (see evaluateMissionBinding) — simulate enforces exactly the
+    // rule execute does, so a dry run can never report "allow" for something execute
+    // would deny. A dry run — no reservation is ever attempted here (see
     // runMissionPreflight, /transactions-only) — but the mission-gate ledger entry IS
     // written on a denial, mirroring how decideTransaction below already writes its
     // own ledger entries even during simulate (an existing, unchanged behavior).
+    if (missionId === undefined) {
+      const binding = evaluateMissionBinding(deps, agent.agentId);
+      if (binding.bound) {
+        deps.ledger.append({
+          kind: LEDGER_KIND_MISSION_POLICY_VERDICT,
+          agentId: agent.agentId,
+          principalId: agent.principalId,
+          data: { missionId: null, allowed: false, reason: binding.reason, activeMissionCount: binding.activeMissionCount, transaction, counterparty: counterparty ?? null },
+        });
+        res.status(200).json({
+          agentId: agent.agentId,
+          decision: { verdict: "deny" as const, reason: binding.reason, source: "mission" as const },
+        });
+        return;
+      }
+    }
+
     if (missionId !== undefined) {
       if (!counterparty) {
         throw new ApiError(400, '"counterparty" is required when "missionId" is present, to evaluate the mission\'s approved-counterparty gate');
@@ -217,10 +280,10 @@ export function createTransactionsRouter(deps: AppDependencies, requireAgent: Re
       const evaluation = evaluateMissionGate(deps, agent, missionId, transaction, counterparty);
 
       if (evaluation.kind === "not_found") {
-        throw new ApiError(404, `Mission "${missionId}" not found`);
+        throw new ApiError(404, missionNotFoundMessage(missionId));
       }
       if (evaluation.kind === "not_owned") {
-        throw new ApiError(403, `Mission "${missionId}" does not belong to the authenticated agent`);
+        throw new ApiError(404, missionNotFoundMessage(missionId));
       }
       if (evaluation.kind === "token_violation") {
         throw new ApiError(409, `Mission "${missionId}" exceeds the agent's own capability token: ${evaluation.reason}`);
@@ -343,16 +406,43 @@ export function createTransactionsRouter(deps: AppDependencies, requireAgent: Re
 
     let delegatedGoal = agent.delegatedGoal;
 
+    if (missionId === undefined) {
+      // Sticky mission-required rule (F1) — see evaluateMissionBinding. Evaluated AFTER
+      // the idempotency claim so the denial is cached and replayed like every other
+      // final decision, and BEFORE anything is reserved or executed.
+      const binding = evaluateMissionBinding(deps, agent.agentId);
+      if (binding.bound) {
+        try {
+          deps.ledger.append({
+            kind: LEDGER_KIND_MISSION_POLICY_VERDICT,
+            agentId: agent.agentId,
+            principalId: agent.principalId,
+            data: { missionId: null, allowed: false, reason: binding.reason, activeMissionCount: binding.activeMissionCount, transaction, counterparty },
+          });
+        } catch (error) {
+          deps.idempotency.release(scopedKey); // nothing happened and nothing was recorded — the key may be retried
+          throw error;
+        }
+        const responseBody = {
+          agentId: agent.agentId,
+          decision: { verdict: "deny" as const, reason: binding.reason, source: "mission" as const },
+        };
+        tryCompleteWithRetry(deps.idempotency, scopedKey, { requestHash, status: 200, body: responseBody });
+        res.status(200).json(responseBody);
+        return;
+      }
+    }
+
     if (missionId !== undefined) {
       const preflight = runMissionPreflight(deps, agent, missionId, transaction, counterparty, scopedKey);
 
       if (preflight.kind === "not_found") {
         deps.idempotency.release(scopedKey);
-        throw new ApiError(404, `Mission "${missionId}" not found`);
+        throw new ApiError(404, missionNotFoundMessage(missionId));
       }
       if (preflight.kind === "not_owned") {
         deps.idempotency.release(scopedKey);
-        throw new ApiError(403, `Mission "${missionId}" does not belong to the authenticated agent`);
+        throw new ApiError(404, missionNotFoundMessage(missionId));
       }
       if (preflight.kind === "token_violation") {
         deps.idempotency.release(scopedKey);

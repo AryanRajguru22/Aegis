@@ -119,7 +119,7 @@ describe("mission integration — ownership and authority boundaries", () => {
       missionId: "mission-1",
     });
 
-    assert.equal(res.status, 403);
+    assert.equal(res.status, 404, "a foreign mission is indistinguishable from a nonexistent one (uniform 404, no existence oracle)");
     assert.equal(stripeRail.calls.length, 0);
   });
 
@@ -137,7 +137,7 @@ describe("mission integration — ownership and authority boundaries", () => {
       missionId: "mission-1",
     });
 
-    assert.equal(res.status, 403);
+    assert.equal(res.status, 404, "a foreign mission is indistinguishable from a nonexistent one (uniform 404, no existence oracle)");
     assert.equal(stripeRail.calls.length, 0);
   });
 

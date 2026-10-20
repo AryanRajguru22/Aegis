@@ -237,12 +237,14 @@ describe("mission history — budget semantics are unaffected (Step 4/5 invarian
 describe("mission history — isolation", () => {
   test("unrelated transactions (no mission, or a DIFFERENT mission) never appear in this mission's history entries", async () => {
     const { app, deps, stripeRail } = buildHarness();
-    const { token } = await createPrincipalAndAgent(app);
+    const { apiKey, token } = await createPrincipalAndAgent(app);
     deps.missions.register(missionInput({ missionId: "mission-1", budgetMinorUnits: 100_000 }));
     deps.missions.register(missionInput({ missionId: "mission-2", budgetMinorUnits: 100_000, allowedCategories: ["software"], approvedCounterparties: ["cloudco"] }));
 
-    // No mission at all.
-    await postTransaction(app, token, "key-no-mission", { transaction: defaultTransaction({ category: "flights", amountMinorUnits: 38_000 }), counterparty: "acme-airlines" });
+    // No mission at all: a mission-bound agent can no longer spend mission-less (F1), so the
+    // "no mission" transaction comes from a SECOND, never-assigned agent of the same principal.
+    const unboundToken = await registerAgent(app, apiKey, "agent-unbound");
+    await postTransaction(app, unboundToken, "key-no-mission", { transaction: defaultTransaction({ category: "flights", amountMinorUnits: 38_000 }), counterparty: "acme-airlines" });
     // A DIFFERENT mission.
     await postTransaction(app, token, "key-mission-2", { transaction: defaultTransaction({ category: "software", amountMinorUnits: 38_000, rail: "stripe_test" }), counterparty: "cloudco", missionId: "mission-2" });
 
