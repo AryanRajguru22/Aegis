@@ -5,6 +5,7 @@ import type { AppDependencies } from "./deps.js";
 import { requireAgentToken, requirePrincipalAuth } from "./auth.js";
 import { errorHandler } from "./errors.js";
 import { securityHeaders } from "./securityHeaders.js";
+import { requestLogger } from "./logging.js";
 import { createPrincipalsRouter } from "./routes/principals.js";
 import { createAgentsRouter } from "./routes/agents.js";
 import { createMissionsRouter } from "./routes/missions.js";
@@ -25,6 +26,7 @@ export function createApp(deps: AppDependencies): Express {
   const app = express();
   app.disable("x-powered-by");
   if (deps.trustProxy !== undefined) app.set("trust proxy", deps.trustProxy);
+  app.use(requestLogger(deps.accessLog));
   app.use(securityHeaders);
   // 64kb is far above any legitimate request (the largest body is a mission/caveat
   // document); a smaller cap limits what an unauthenticated caller can make us parse.
@@ -33,6 +35,24 @@ export function createApp(deps: AppDependencies): Express {
   // exclusively over the same routes exercised in src/api/__tests__ — it has no
   // server-side rendering and no access of its own to anything privileged.
   app.use(express.static(path.join(import.meta.dirname, "../../public")));
+
+  // Liveness: the process is up and the event loop is responsive. Deliberately has no
+  // dependencies, so a database problem cannot make an orchestrator kill a healthy process.
+  app.get("/healthz", (_req, res) => {
+    res.status(200).json({ status: "ok" });
+  });
+
+  // Readiness: the process can actually serve (its database answers). Returns no detail —
+  // a failing check is logged server-side and surfaces to callers only as a 503.
+  app.get("/readyz", (_req, res) => {
+    try {
+      deps.healthCheck?.();
+      res.status(200).json({ status: "ok" });
+    } catch (error) {
+      console.error("Readiness check failed:", error);
+      res.status(503).json({ status: "unavailable" });
+    }
+  });
 
   // Unauthenticated by design: this reveals only a server-wide config flag (whether
   // this instance was started with AEGIS_DEMO_MODE=true — see src/api/demoMode.ts) and
@@ -43,18 +63,6 @@ export function createApp(deps: AppDependencies): Express {
   // instance (see risk/types.ts's IntentJudge.provider/.model, set truthfully by each
   // of the three real implementations) — never a second, independently-tracked value
   // that could drift from what actually judges each transaction.
-  // Probe for load balancers / orchestrators. Deliberately returns no detail — a failing
-  // check is logged server-side and surfaces to callers only as a 503.
-  app.get("/healthz", (_req, res) => {
-    try {
-      deps.healthCheck?.();
-      res.status(200).json({ status: "ok" });
-    } catch (error) {
-      console.error("Health check failed:", error);
-      res.status(503).json({ status: "unavailable" });
-    }
-  });
-
   app.get("/demo-mode", (_req, res) => {
     res.status(200).json({
       demoMode: Boolean(deps.demoMode),
@@ -62,6 +70,8 @@ export function createApp(deps: AppDependencies): Express {
       aiModel: deps.intentJudge.model,
     });
   });
+
+  if (deps.authFailureLimiter) app.use(deps.authFailureLimiter);
 
   const requirePrincipal = requirePrincipalAuth(deps.principals);
   const requireAgent = requireAgentToken(deps.rootPublicKey, deps.agents);

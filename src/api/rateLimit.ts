@@ -48,3 +48,45 @@ export function createRateLimiter(options: RateLimitOptions): RequestHandler {
     next();
   };
 }
+
+/**
+ * Throttles clients that keep presenting bad credentials. Every response with status 401
+ * counts as a failure against the client's IP; once `maxFailures` is reached inside the
+ * window, further requests from that IP get 429 until the window passes. Credentials are
+ * 256-bit random values, so guessing is infeasible regardless — this bounds log noise and
+ * wasted work from scanners. Per-process and in memory, like createRateLimiter.
+ */
+export function createAuthFailureLimiter(options: { maxFailures: number; windowMs: number; now?: () => number }): RequestHandler {
+  const now = options.now ?? Date.now;
+  const failures = new Map<string, { count: number; resetAt: number }>();
+  const MAX_TRACKED = 10_000;
+
+  return (req, res, next) => {
+    const t = now();
+    const key = req.ip ?? "unknown";
+    const current = failures.get(key);
+    if (current && current.resetAt > t && current.count >= options.maxFailures) {
+      res.setHeader("Retry-After", String(Math.max(1, Math.ceil((current.resetAt - t) / 1000))));
+      res.status(429).json({ error: "Too many failed authentication attempts — try again later" });
+      return;
+    }
+    res.on("finish", () => {
+      if (res.statusCode !== 401) return;
+      const at = now();
+      if (failures.size > MAX_TRACKED) {
+        for (const [k, v] of failures) if (v.resetAt <= at) failures.delete(k);
+        if (failures.size > MAX_TRACKED) {
+          const oldest = failures.keys().next().value;
+          if (oldest !== undefined) failures.delete(oldest);
+        }
+      }
+      let entry = failures.get(key);
+      if (!entry || entry.resetAt <= at) {
+        entry = { count: 0, resetAt: at + options.windowMs };
+        failures.set(key, entry);
+      }
+      entry.count += 1;
+    });
+    next();
+  };
+}

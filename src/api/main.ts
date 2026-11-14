@@ -36,8 +36,8 @@ import { GeminiIntentJudge } from "../risk/geminiJudge.js";
 import { requirePrincipalAuth } from "./auth.js";
 import { createSecurityLab } from "./securityLab.js";
 import { ensureMissionBindingEpoch } from "./policyEpoch.js";
-import { envString, parsePort, parseSignupRateLimit, parseTrustProxy } from "./config.js";
-import { createRateLimiter } from "./rateLimit.js";
+import { checkKeyPolicy, envString, parseAllowEphemeral, parsePort, parseSignupRateLimit, parseTrustProxy } from "./config.js";
+import { createAuthFailureLimiter, createRateLimiter } from "./rateLimit.js";
 import type { AppDependencies } from "./deps.js";
 import type { IntentJudge } from "../risk/types.js";
 
@@ -155,7 +155,28 @@ async function main(): Promise<void> {
   // into the logs, which are routinely shipped to third-party aggregators.
   const isProduction = process.env.NODE_ENV === "production";
   const rootPrivateKeyHex = envString(process.env.AEGIS_ROOT_PRIVATE_KEY_HEX);
-  const rootKeys = rootPrivateKeyHex ? loadRootKeyPairFromHex(rootPrivateKeyHex) : generateRootKeyPair();
+  const ledgerPrivateKeyHex = envString(process.env.AEGIS_LEDGER_PRIVATE_KEY_HEX);
+  const keyProblems = checkKeyPolicy({
+    nodeEnv: process.env.NODE_ENV,
+    rootKeySet: rootPrivateKeyHex !== undefined,
+    ledgerKeySet: ledgerPrivateKeyHex !== undefined,
+    allowEphemeral: parseAllowEphemeral(process.env.AEGIS_ALLOW_EPHEMERAL_KEYS),
+    rootKeyHex: rootPrivateKeyHex,
+    ledgerKeyHex: ledgerPrivateKeyHex,
+  });
+  if (keyProblems.length > 0) {
+    for (const problem of keyProblems) console.error(problem);
+    process.exit(1);
+  }
+  // A malformed key fails with a fixed message that names the variable only — never the
+  // parser's own error text, which could echo part of the (secret) value.
+  let rootKeys: ReturnType<typeof generateRootKeyPair>;
+  try {
+    rootKeys = rootPrivateKeyHex ? loadRootKeyPairFromHex(rootPrivateKeyHex) : generateRootKeyPair();
+  } catch {
+    console.error("AEGIS_ROOT_PRIVATE_KEY_HEX is not a valid root private key. Generate a valid one with `npm run keygen`.");
+    process.exit(1);
+  }
   if (!rootPrivateKeyHex) {
     console.warn(
       `No AEGIS_ROOT_PRIVATE_KEY_HEX set — generated an ephemeral root key for this process only. ` +
@@ -166,8 +187,13 @@ async function main(): Promise<void> {
     );
   }
 
-  const ledgerPrivateKeyHex = envString(process.env.AEGIS_LEDGER_PRIVATE_KEY_HEX);
-  const ledgerKeys = ledgerPrivateKeyHex ? ledgerKeyPairFromPrivateHex(ledgerPrivateKeyHex) : generateLedgerKeyPair();
+  let ledgerKeys: ReturnType<typeof generateLedgerKeyPair>;
+  try {
+    ledgerKeys = ledgerPrivateKeyHex ? ledgerKeyPairFromPrivateHex(ledgerPrivateKeyHex) : generateLedgerKeyPair();
+  } catch {
+    console.error("AEGIS_LEDGER_PRIVATE_KEY_HEX is not a valid ledger private key. Generate a valid one with `npm run keygen`.");
+    process.exit(1);
+  }
   if (!ledgerPrivateKeyHex) {
     console.warn(
       `No AEGIS_LEDGER_PRIVATE_KEY_HEX set — generated an ephemeral ledger signing key. For a persistent ` +
@@ -266,6 +292,9 @@ async function main(): Promise<void> {
     simulationCache: createInMemorySimulationCache(),
     demoMode,
     trustProxy,
+    authFailureLimiter: createAuthFailureLimiter({ maxFailures: 100, windowMs: 15 * 60 * 1000 }),
+    // One JSON line per request on stdout in production; quiet in dev unless AEGIS_ACCESS_LOG=true.
+    accessLog: isProduction || process.env.AEGIS_ACCESS_LOG === "true" ? (line) => console.log(line) : undefined,
     healthCheck: () => {
       db.prepare("SELECT 1").get();
     },
@@ -289,7 +318,7 @@ async function main(): Promise<void> {
   // demo-only route used to be mounted (see the removed comment this replaces):
   // createApp()'s own catch-all/error handler are already the last middleware inside
   // `app`, so anything meant to be reached first has to live on an outer app.
-  const labOptions = { mockX402Rail, knownPayers, demoPayerPublicKeyHex: publicKeyToHex(demoPayer.publicKey), trustProxy };
+  const labOptions = { mockX402Rail, knownPayers, demoPayerPublicKeyHex: publicKeyToHex(demoPayer.publicKey), trustProxy, accessLog: deps.accessLog };
   let lab = createSecurityLab(labOptions);
   const requirePrincipal = requirePrincipalAuth(principals);
 

@@ -38,6 +38,6 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     return;
   }
   // eslint-disable-next-line no-console
-  console.error("Unexpected API error:", err);
+  console.error(`Unexpected API error (request ${String(res.locals.requestId ?? "-")}):`, err);
   res.status(500).json({ error: "Internal server error" });
 };

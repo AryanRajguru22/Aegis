@@ -1,0 +1,39 @@
+# Single-instance Aegis with a persistent volume.
+#
+#   npm run keygen                       # once; copy the two lines into .env.docker
+#   docker compose --env-file .env.docker up -d --build
+#
+# .env.docker (never commit it) needs at least:
+#   AEGIS_ROOT_PRIVATE_KEY_HEX=...
+#   AEGIS_LEDGER_PRIVATE_KEY_HEX=...
+# Run exactly ONE replica: state is one SQLite file (see README "Scaling and operational limits").
+services:
+  aegis:
+    build: .
+    image: aegis:latest
+    restart: unless-stopped
+    ports:
+      - "${AEGIS_HOST_PORT:-8787}:8787"
+    environment:
+      AEGIS_DEMO_MODE: ${AEGIS_DEMO_MODE:-true}
+      AEGIS_ROOT_PRIVATE_KEY_HEX: ${AEGIS_ROOT_PRIVATE_KEY_HEX:?run `npm run keygen` and set AEGIS_ROOT_PRIVATE_KEY_HEX}
+      AEGIS_LEDGER_PRIVATE_KEY_HEX: ${AEGIS_LEDGER_PRIVATE_KEY_HEX:?run `npm run keygen` and set AEGIS_LEDGER_PRIVATE_KEY_HEX}
+      AEGIS_RISK_PROVIDER: ${AEGIS_RISK_PROVIDER:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      AEGIS_TRUST_PROXY: ${AEGIS_TRUST_PROXY:-}
+      AEGIS_SIGNUP_RATE_LIMIT: ${AEGIS_SIGNUP_RATE_LIMIT:-}
+    volumes:
+      - aegis-data:/data
+    stop_grace_period: 15s
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  aegis-data:

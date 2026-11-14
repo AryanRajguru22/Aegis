@@ -43,3 +43,45 @@ export function parseSignupRateLimit(value: string | undefined): number {
   }
   return Number(v);
 }
+
+export interface KeyPolicyInput {
+  nodeEnv: string | undefined;
+  rootKeySet: boolean;
+  ledgerKeySet: boolean;
+  /** AEGIS_ALLOW_EPHEMERAL_KEYS=true */
+  allowEphemeral: boolean;
+  rootKeyHex?: string;
+  ledgerKeyHex?: string;
+}
+
+/**
+ * Startup policy for the two signing keys. In NODE_ENV=production, running with
+ * generated (ephemeral) keys would silently invalidate every issued token and make the
+ * previous ledger look tampered after any restart, so it is refused unless the operator
+ * explicitly opts in with AEGIS_ALLOW_EPHEMERAL_KEYS=true (e.g. a throwaway demo or a CI
+ * smoke test). Returns human-readable problems (never including key material); empty = ok.
+ */
+export function checkKeyPolicy(input: KeyPolicyInput): string[] {
+  const problems: string[] = [];
+  if (input.nodeEnv === "production" && !input.allowEphemeral) {
+    if (!input.rootKeySet) {
+      problems.push(
+        "AEGIS_ROOT_PRIVATE_KEY_HEX is required when NODE_ENV=production (run `npm run keygen`, or set AEGIS_ALLOW_EPHEMERAL_KEYS=true for a throwaway instance)."
+      );
+    }
+    if (!input.ledgerKeySet) {
+      problems.push(
+        "AEGIS_LEDGER_PRIVATE_KEY_HEX is required when NODE_ENV=production (run `npm run keygen`, or set AEGIS_ALLOW_EPHEMERAL_KEYS=true for a throwaway instance)."
+      );
+    }
+  }
+  if (input.rootKeyHex !== undefined && input.ledgerKeyHex !== undefined && input.rootKeyHex === input.ledgerKeyHex) {
+    problems.push("AEGIS_ROOT_PRIVATE_KEY_HEX and AEGIS_LEDGER_PRIVATE_KEY_HEX must be two different keys.");
+  }
+  return problems;
+}
+
+/** AEGIS_ALLOW_EPHEMERAL_KEYS: only the exact string "true" enables it. */
+export function parseAllowEphemeral(value: string | undefined): boolean {
+  return envString(value) === "true";
+}

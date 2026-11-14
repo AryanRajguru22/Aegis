@@ -14,6 +14,7 @@ import { createDemoIntentJudge } from "./demoMode.js";
 import { createDemoTamperRouter } from "./demoTamper.js";
 import { ensureMissionBindingEpoch } from "./policyEpoch.js";
 import { errorHandler } from "./errors.js";
+import { createAuthFailureLimiter } from "./rateLimit.js";
 import { createApp } from "./server.js";
 import type { PrincipalStore } from "../state/principals.js";
 import type { DatabaseSync } from "node:sqlite";
@@ -57,6 +58,8 @@ export interface SecurityLabRailOptions {
   demoPayerPublicKeyHex: string;
   /** Forwarded to the lab app so its own security headers/IP handling match production. */
   trustProxy?: boolean | number | string;
+  /** Same access-log sink as production, so lab traffic is diagnosable too. */
+  accessLog?: (line: string) => void;
 }
 
 /**
@@ -107,6 +110,8 @@ export function createSecurityLab(railOpts: SecurityLabRailOptions): SecurityLab
     reservations,
     simulationCache: createInMemorySimulationCache(),
     trustProxy: railOpts.trustProxy,
+    accessLog: railOpts.accessLog,
+    authFailureLimiter: createAuthFailureLimiter({ maxFailures: 100, windowMs: 15 * 60 * 1000 }),
     demoMode: true, // truthful: the lab always runs the deterministic stand-in judge, never a real provider
   });
 

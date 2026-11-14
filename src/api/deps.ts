@@ -43,6 +43,10 @@ export interface AppDependencies {
   demoMode?: boolean;
   /** Liveness/readiness probe for GET /healthz: must throw if the process cannot serve (e.g. the database is unreachable). Omitted in tests, where /healthz then reports ok. */
   healthCheck?: () => void;
+  /** Receives one JSON access-log line per request (see src/api/logging.ts). Omitted in tests, which stay quiet. */
+  accessLog?: (line: string) => void;
+  /** Optional limiter applied to all API routes that counts 401s per client IP (see createAuthFailureLimiter). Omitted in tests. */
+  authFailureLimiter?: import("express").RequestHandler;
   /** Passed to Express's "trust proxy" setting (see AEGIS_TRUST_PROXY). Off by default: only enable it behind a reverse proxy you control, otherwise clients can spoof their IP. */
   trustProxy?: boolean | number | string;
 }

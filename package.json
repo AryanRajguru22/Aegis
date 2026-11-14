@@ -8,6 +8,8 @@
   },
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit && tsc -p verifier/tsconfig.json --noEmit",
+    "lint": "node scripts/lint.mjs",
     "start": "npm run build && node --env-file-if-exists=.env --experimental-wasm-modules dist/api/main.js",
     "start:prod": "node --experimental-wasm-modules dist/api/main.js",
     "keygen": "npm run build && node --experimental-wasm-modules dist/api/keygen.js",
@@ -24,7 +26,8 @@
     "test:mission": "npm run build && node --experimental-wasm-modules --test dist/mission/__tests__/*.test.js",
     "test": "npm run build && node --experimental-wasm-modules --test --test-reporter=spec dist/capability/__tests__/*.test.js dist/state/__tests__/*.test.js dist/risk/__tests__/risk-core.test.js dist/risk/__tests__/gemini-judge.test.js dist/decision/__tests__/*.test.js dist/rails/__tests__/mock-x402-rail.test.js dist/rails/__tests__/stripe-rail.test.js dist/execution/__tests__/*.test.js dist/api/__tests__/*.test.js dist/mission/__tests__/*.test.js",
     "build:verifier": "tsc -p verifier/tsconfig.json",
-    "test:verifier": "npm run build:verifier && node --test --test-reporter=spec verifier/dist/__tests__/*.test.js"
+    "test:verifier": "npm run build:verifier && node --test --test-reporter=spec verifier/dist/__tests__/*.test.js",
+    "e2e": "npm run build && npm run build:verifier && node scripts/e2e.mjs"
   },
   "keywords": [],
   "author": "",

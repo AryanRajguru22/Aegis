@@ -4,36 +4,73 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# Least privilege: the workflow only reads the repository. No secrets are used, so
+# pull requests from forks run the full suite.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - run: npm audit --omit=dev --audit-level=high
+      - name: Install (lockfile only)
+        run: npm ci
+      - name: Lint (repository hygiene + secret scan)
+        run: npm run lint
+      - name: Type check (main + verifier)
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build
       - name: Main test suite
         run: npm test
       - name: Verifier test suite
         run: npm run test:verifier
+      - name: Dependency audit (runtime, high+)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Dependency audit (all, informational)
+        run: npm audit --audit-level=high
 
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: test
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Build image
         run: docker build -t aegis:ci .
-      - name: Smoke test (demo mode, health check)
+      - name: Refuses to start in production without signing keys
         run: |
-          docker run -d --name aegis -p 8787:8787 -e AEGIS_DEMO_MODE=true aegis:ci
+          if docker run --rm -e AEGIS_DEMO_MODE=true aegis:ci; then
+            echo "expected a startup failure without signing keys"; exit 1
+          fi
+      - name: Start, health, readiness, graceful stop
+        run: |
+          docker run -d --name aegis -p 8787:8787 \
+            -e AEGIS_DEMO_MODE=true -e AEGIS_ALLOW_EPHEMERAL_KEYS=true aegis:ci
+          ok=0
           for i in $(seq 1 30); do
-            curl -fsS http://localhost:8787/healthz && exit 0
+            if curl -fsS http://localhost:8787/readyz; then ok=1; break; fi
             sleep 1
           done
-          docker logs aegis
-          exit 1
+          if [ "$ok" != 1 ]; then docker logs aegis; exit 1; fi
+          curl -fsS http://localhost:8787/healthz
+          curl -fsSI http://localhost:8787/ | grep -i content-security-policy
+          docker stop aegis
+          code=$(docker inspect --format '{{.State.ExitCode}}' aegis)
+          if [ "$code" != 0 ]; then docker logs aegis; echo "exit code $code"; exit 1; fi
