@@ -37,6 +37,47 @@ one), then checks spend never exceeded budget. This only runs meaningfully once 
 1 has already passed — a budget number computed from an already-broken chain is not a
 proof of anything, so it is never presented as one.
 
+**Proof 3 — Settlement attribution** (`verifier/settlementAttribution.ts`): checks the
+mission-required rule the API now enforces (an agent that has ever been assigned a
+mission must name one on every spend). It finds every real settlement — an
+`execution_result` with `success: true` — and asks whether it can be attributed to a
+valid mission:
+
+- The settlement is joined, by its **rail reference** (unique per settlement), to a
+  `mission_pipeline_outcome` and then to a `mission_transaction_link` for the same
+  mission and amount. Position in the ledger is never used for the join, because
+  concurrent requests interleave.
+- "Valid mission" means a `mission_created` entry for the same agent and principal exists
+  before the settlement.
+- A settlement with no attribution by an agent that had **no** mission yet is
+  *permitted* (token-only authority is still allowed for never-assigned agents). The same
+  settlement by an agent that already had a mission is a **mission-binding violation**.
+- Evidence that cannot decide the question (duplicate rail references, an outcome with no
+  budget link, an older-format history with no outcome, a mission with no creation entry
+  or owned by another agent) is reported as **ambiguous** — never as a pass and never as
+  a proven violation.
+
+This proof is, like Proof 2, only computed after Proof 1 passes. Its findings are
+**policy-compliance findings, not integrity failures**: they never appear in the
+"hash chain" lines, and a tampered ledger reports the cryptographic failure and nothing
+else.
+
+### Policy epoch (legacy vs. post-fix activity)
+
+A ledger entry of `kind: "policy_epoch"` with `data.policy: "mission-binding"` marks the
+point from which the rule was being enforced. It is an ordinary signed, hash-chained
+entry, so it cannot be inserted, moved or removed without failing Proof 1. If several
+exist the earliest is used; entries with another policy or malformed data are ignored.
+
+- Violations **before** the marker, or in a ledger with **no** marker, are reported as
+  **HISTORICAL** (exit 3).
+- Violations **after** the marker mean the rule was in force and was not enforced (exit 1).
+
+**The API does not write this marker yet.** Until it does (a separate follow-up), every
+real ledger is "epoch not recorded" and all mission-binding violations in it are
+reported as historical — the verifier cannot tell a pre-fix violation from a post-fix one
+and says so.
+
 ## What it deliberately does not trust
 
 The Aegis dashboard, the Aegis API, any server response, any number Aegis itself
@@ -69,9 +110,11 @@ node verifier/dist/cli.js <artifact.json> --json
 node verifier/dist/cli.js <artifact.json> --compare <older-artifact.json>
 ```
 
-Exit codes: `0` = verified, `1` = tamper or budget violation detected, `2` =
-malformed artifact or insufficient evidence to prove something (never silently
-treated as a pass).
+Exit codes: `0` = verified, `1` = tamper, budget violation, or a mission-binding
+violation after the policy epoch, `2` = malformed artifact, insufficient evidence, or
+ambiguous settlement attribution (never silently treated as a pass), `3` = integrity
+verified but **historical** mission-binding findings only (not tampering, and not
+reported as clean).
 
 ## Expected behavior
 
@@ -126,6 +169,27 @@ reports as `spentMinorUnits` — the two are produced by two separately-written 
 paths agreeing on the same underlying facts.
 
 ## Known limitations (disclosed, not hidden)
+
+**The amount of an unattributed settlement cannot be determined.** An `execution_result`
+records the rail reference but no amount and no mission, and the policy/decision entries
+carry no key tying them to a specific settlement (under concurrency they are not
+adjacent either). The verifier therefore reports a *count* and states that the amount
+cannot be determined; it never estimates one. Exact amounts would require the API to
+record the amount (or the idempotency key) on the decision/settlement events — a
+separate follow-up, deliberately not done here.
+
+**Legacy ledgers cannot be classified as pre- or post-fix without a marker.** See
+"Policy epoch" above. Spend that happened before the rule existed is not rewritten and is
+reported as historical.
+
+**Agent binding is inferred from `mission_created` entries.** That is the same fact the
+API derives from its missions table; a mission registered but whose ledger entry is
+missing (a crash between the two writes) would make the verifier treat the agent as
+unbound until that entry exists.
+
+**A budget-link gap is reported, not repaired.** A settlement whose outcome was written
+but whose `mission_transaction_link` was not (the documented crash window) is
+*ambiguous*: that spend is real but absent from the Proof 2 budget total.
 
 **Tail truncation is undetectable from a single snapshot.** If the most *recent*
 entries are deleted outright (not modified — removed), the remaining chain is fully

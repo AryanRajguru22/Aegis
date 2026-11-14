@@ -1,5 +1,6 @@
 import { verifyIntegrity, type IntegrityResult } from "./integrity.js";
 import { reconstructMissionBudgets, type MissionBudgetResult } from "./missionBudget.js";
+import { analyzeSettlementAttribution, type SettlementAttributionResult } from "./settlementAttribution.js";
 import type { LedgerExportArtifact } from "./schema.js";
 
 export interface VerificationReport {
@@ -16,6 +17,13 @@ export interface VerificationReport {
    * empty rather than presented as if it were meaningful.
    */
   missions: MissionBudgetResult[];
+  /**
+   * Policy-compliance findings about settlements (the mission-required rule, audit
+   * finding F1). Kept strictly separate from `integrity`: a finding here is NOT
+   * evidence of tampering. null — not an empty result — when integrity failed,
+   * because findings derived from an untrusted chain prove nothing.
+   */
+  settlementAttribution: SettlementAttributionResult | null;
   overallVerified: boolean;
 }
 
@@ -32,7 +40,15 @@ export function buildReport(artifact: LedgerExportArtifact): VerificationReport 
 
   const missions = integrity.valid ? reconstructMissionBudgets(artifact.entries) : [];
 
-  const overallVerified = integrity.valid && missions.every((m) => m.evidenceSufficient && m.budgetInvariantHolds === true);
+  const settlementAttribution = integrity.valid ? analyzeSettlementAttribution(artifact.entries) : null;
+
+  const overallVerified =
+    integrity.valid &&
+    missions.every((m) => m.evidenceSufficient && m.budgetInvariantHolds === true) &&
+    settlementAttribution !== null &&
+    settlementAttribution.ambiguous === 0 &&
+    settlementAttribution.bindingViolations.legacy === 0 &&
+    settlementAttribution.bindingViolations.postEpoch === 0;
 
   return {
     schemaVersion: artifact.schemaVersion,
@@ -43,12 +59,57 @@ export function buildReport(artifact: LedgerExportArtifact): VerificationReport 
       reason: integrity.failure?.reason ?? null,
     },
     missions,
+    settlementAttribution,
     overallVerified,
   };
 }
 
 function fmtMoney(minorUnits: number): string {
   return `$${(minorUnits / 100).toFixed(2)}`;
+}
+
+const MAX_LISTED_FINDINGS = 10;
+
+function renderAttributionSection(a: SettlementAttributionResult): string[] {
+  const lines: string[] = [];
+  const violations = a.bindingViolations.legacy + a.bindingViolations.postEpoch;
+  lines.push("SETTLEMENT ATTRIBUTION (mission-required rule)");
+  lines.push(`  Successful settlements: ${a.successfulSettlements}`);
+  lines.push(`  ✓ attributed to a valid mission: ${a.attributedToMission}`);
+  lines.push(`  ✓ permitted mission-less (agent had no mission at the time): ${a.permittedMissionless}`);
+  if (a.bindingViolations.postEpoch > 0) {
+    lines.push(`✗ ${a.bindingViolations.postEpoch} unattributed settlement(s) by a mission-bound agent AFTER the policy epoch (entry #${a.epochMarkerSeq}) — the rule was in force and was not enforced`);
+  }
+  if (a.bindingViolations.legacy > 0) {
+    lines.push(
+      a.epochMarkerSeq === null
+        ? `! HISTORICAL: ${a.bindingViolations.legacy} unattributed settlement(s) by a mission-bound agent — this ledger records no policy epoch, so they cannot be shown to postdate the fix`
+        : `! HISTORICAL: ${a.bindingViolations.legacy} unattributed settlement(s) by a mission-bound agent BEFORE the policy epoch (entry #${a.epochMarkerSeq})`
+    );
+  }
+  if (a.ambiguous > 0) {
+    lines.push(`? ${a.ambiguous} settlement(s) whose attribution cannot be established from the ledger`);
+  }
+  if (violations > 0) {
+    lines.push("  Amount of unattributed settlements: amount cannot be determined");
+    lines.push(`    (${a.amountNote})`);
+  }
+  if (a.epochMarkerSeq === null && violations > 0) {
+    lines.push("  Policy epoch: not recorded in this ledger");
+  }
+  for (const finding of a.findings.slice(0, MAX_LISTED_FINDINGS)) {
+    lines.push(`  - entry #${finding.seq} (${finding.agentId}): ${finding.reason}`);
+  }
+  if (a.findings.length > MAX_LISTED_FINDINGS) {
+    lines.push(`  … and ${a.findings.length - MAX_LISTED_FINDINGS} more (use --json for the full list)`);
+  }
+  if (a.missionLinksWithoutExecution > 0) {
+    lines.push(`  note: ${a.missionLinksWithoutExecution} mission_transaction_link entr${a.missionLinksWithoutExecution === 1 ? "y has" : "ies have"} no matching execution_result (over-states spend; informational)`);
+  }
+  if (violations > 0 || a.ambiguous > 0) {
+    lines.push("  These are policy-compliance findings on a cryptographically intact ledger — not tampering.");
+  }
+  return lines;
 }
 
 /** Renders the ~10-second, judge-facing text report. */
@@ -98,8 +159,24 @@ export function renderHumanReport(report: VerificationReport): string {
   }
   lines.push("");
 
+  const attribution = report.settlementAttribution;
+  if (attribution) {
+    lines.push(...renderAttributionSection(attribution));
+    lines.push("");
+  }
+  const postEpochViolations = attribution?.bindingViolations.postEpoch ?? 0;
+  const legacyViolations = attribution?.bindingViolations.legacy ?? 0;
+  const ambiguousSettlements = attribution?.ambiguous ?? 0;
+  const budgetViolated = report.missions.some((m) => m.budgetInvariantHolds === false);
+
   if (anyInsufficient) {
     lines.push("VERDICT: INCOMPLETE (see INSUFFICIENT EVIDENCE above — not claimed as pass or fail)");
+  } else if (postEpochViolations > 0 || budgetViolated) {
+    lines.push("VERDICT: NOT VERIFIED");
+  } else if (ambiguousSettlements > 0) {
+    lines.push("VERDICT: INCOMPLETE (settlement attribution is ambiguous — see above; not claimed as pass or fail)");
+  } else if (legacyViolations > 0) {
+    lines.push("VERDICT: INTEGRITY VERIFIED — HISTORICAL POLICY FINDINGS (see above; not tampering, and not claimed as compliant)");
   } else if (report.overallVerified) {
     lines.push("✓ ALL INVARIANTS VERIFIED");
     lines.push("");
@@ -111,10 +188,19 @@ export function renderHumanReport(report: VerificationReport): string {
   return lines.join("\n");
 }
 
-/** 0 = verified, 1 = tamper/violation detected, 2 = malformed/insufficient evidence. */
-export function exitCodeForReport(report: VerificationReport): 0 | 1 | 2 {
+/**
+ * 0 = verified, 1 = tamper / budget violation / mission-binding violation after the
+ * policy epoch, 2 = malformed or insufficient evidence (incl. ambiguous settlement
+ * attribution), 3 = integrity verified but HISTORICAL mission-binding findings only
+ * (never reported as tampering, never reported as clean).
+ */
+export function exitCodeForReport(report: VerificationReport): 0 | 1 | 2 | 3 {
   if (!report.integrity.valid) return 1;
+  const attribution = report.settlementAttribution;
+  if (attribution && attribution.bindingViolations.postEpoch > 0) return 1;
   if (report.missions.some((m) => !m.evidenceSufficient)) return 2;
   if (report.missions.some((m) => m.budgetInvariantHolds === false)) return 1;
+  if (attribution && attribution.ambiguous > 0) return 2;
+  if (attribution && attribution.bindingViolations.legacy > 0) return 3;
   return 0;
 }

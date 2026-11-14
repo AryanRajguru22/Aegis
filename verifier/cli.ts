@@ -10,7 +10,7 @@ import { compareExports } from "./compareExports.js";
  * an API key, never calls any Aegis server/API/dashboard.
  *
  * Usage: node verifier/dist/cli.js <artifact.json> [--json] [--compare <older-artifact.json>]
- * Exit codes: 0 = verified, 1 = tamper/violation detected, 2 = malformed/insufficient evidence.
+ * Exit codes: 0 = verified, 1 = tamper/violation detected, 2 = malformed/insufficient evidence, 3 = integrity verified but historical mission-binding findings only.
  * --compare never changes the exit code — it is a supplementary, partial check (see
  * verifier/compareExports.ts) covering only what a single artifact cannot: whether an
  * older export's entries were later truncated.
