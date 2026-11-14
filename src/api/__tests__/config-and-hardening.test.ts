@@ -60,11 +60,11 @@ describe("security headers, health and body limits", () => {
     for (const path of ["/", "/healthz", "/nope"]) {
       const res = await request(app).get(path);
       assert.equal(res.headers["x-content-type-options"], "nosniff", path);
-      assert.equal(res.headers["x-frame-options"], "DENY", path);
+      assert.equal(res.headers["x-frame-options"], "SAMEORIGIN", path);
       assert.equal(res.headers["x-powered-by"], undefined, path);
       const csp = String(res.headers["content-security-policy"]);
       assert.match(csp, /script-src 'self'(;|$)/, path);
-      assert.match(csp, /frame-ancestors 'none'/, path);
+      assert.match(csp, /frame-ancestors 'self'/, path);
     }
   });
 

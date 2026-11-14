@@ -381,7 +381,8 @@
   }
   @media (prefers-reduced-motion: reduce) { .infoPopover { transition: none; } }
 
-  .wsSplit { display: grid; grid-template-columns: 300px 1fr; gap: 48px; align-items: start; }
+  .wsSplit { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 48px; align-items: start; }
+  .wsSplit.wide { grid-template-columns: 380px minmax(0, 1fr); }
   /* A faint architectural tint, not a background — the left rail reads as its own
      considered surface (agents, forms, lists) distinct from the open environment
      on the right, without becoming another opaque panel. */
@@ -391,14 +392,14 @@
     padding: 10px 24px 16px 12px;
     border-radius: 6px 0 0 6px;
   }
-  .wsMain { min-width: 0; }
+  .wsMain, .wsPane { min-width: 0; }
   @media (max-width: 1180px) {
-    .wsSplit { grid-template-columns: 1fr; gap: 0; }
+    .wsSplit, .wsSplit.wide { grid-template-columns: minmax(0, 1fr); gap: 0; }
     .wsPane { border-right: none; border-bottom: 1px solid var(--border); border-radius: 6px; padding: 10px 12px 22px; margin-bottom: 22px; }
   }
 
   .row { display: flex; gap: 8px; }
-  .row > * { flex: 1; }
+  .row > * { flex: 1; min-width: 0; }
 
   /* ---- Overview: a small set of real, labeled facts — not a duplicate of every
      panel elsewhere. Clicking a fact jumps to the workspace that owns it. ---- */
@@ -601,7 +602,7 @@
     .theatreCol:nth-child(3) { grid-column: 1 / -1; border-left: none; border-top: 1px solid var(--border-soft); padding: 20px 0 0; margin-top: 4px; }
   }
   @media (max-width: 800px) {
-    .theatreGrid { grid-template-columns: 1fr; }
+    .theatreGrid { grid-template-columns: minmax(0, 1fr); }
     .theatreCol { padding: 0 0 20px; border-left: none; border-top: 1px solid var(--border-soft); padding-top: 20px; }
     .theatreCol:first-child { border-top: none; padding-top: 0; }
     .theatreCol:nth-child(3) { margin-top: 0; }
@@ -739,7 +740,22 @@
   .evidenceStage .chainRole { font-size: 15px; color: var(--text); font-weight: 700; margin-bottom: 8px; }
 
   @media (max-width: 1180px) {
-    #authScreen { grid-template-columns: 1fr; margin: 60px auto; text-align: left; }
+    #authScreen { grid-template-columns: minmax(0, 1fr); margin: 60px auto; text-align: left; }
+  }
+
+  /* Chains like Mission → Capability → … are inline runs with no spaces, so they cannot
+     wrap on their own; lay them out as a wrapping flex row at every width. */
+  .chainSequence { display: flex; flex-wrap: wrap; align-items: baseline; row-gap: 4px; }
+
+  /* Phones: the six-tab nav scrolls sideways instead of running off-screen (the page
+     itself never scrolls horizontally), and side gutters tighten. */
+  @media (max-width: 640px) {
+    #navBar { overflow-x: auto; overflow-y: hidden; padding: 0 8px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    #navBar::-webkit-scrollbar { display: none; }
+    .navBtn { flex: 0 0 auto; white-space: nowrap; padding: 11px 12px; }
+    .chainSequence { font-size: 12px; }
+    .chainSequence .sep { margin: 0 6px; }
+    .wsHero h2 { font-size: 23px; }
   }
 </style>
 </head>
@@ -792,7 +808,7 @@
     <h2>Sign in to Aegis</h2>
     <div id="signInForm">
       <label>Principal ID</label>
-      <input id="signInPrincipalId" placeholder="aryan" autocomplete="username" />
+      <input id="signInPrincipalId" placeholder="your-principal-id" autocomplete="username" />
       <label>API Key</label>
       <input id="signInApiKey" type="password" placeholder="the API key issued for this identity" autocomplete="current-password" />
       <div class="actionRow" style="margin-top:8px">
@@ -994,7 +1010,7 @@
         <div class="chainSequence"><b>Mission</b><span class="sep">→</span><b>Capability</b><span class="sep">→</span><b>Policy</b><span class="sep">→</span><b>Risk</b><span class="sep">→</span><b>Decision</b><span class="sep">→</span><b>Execution</b></div>
         <div class="hint">A denial stops exactly where it actually stopped.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about denials">ⓘ</button><span class="infoPopover" role="tooltip">Nothing later in the pipeline ever renders as if it ran.</span></span></div>
       </div>
-      <div class="wsSplit" style="grid-template-columns: 380px 1fr">
+      <div class="wsSplit wide">
         <div class="wsPane">
           <div class="section surface">
             <h2>Submit transaction — <span id="activeAgentLabel" style="color: var(--text); text-transform: none">none selected</span></h2>

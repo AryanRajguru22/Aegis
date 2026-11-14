@@ -3,8 +3,8 @@
 ## Commands
 
 ```bash
-npm test              # main Aegis suite — 571 tests
-npm run test:verifier # the independent verifier's own suite — 58 tests
+npm test              # main Aegis suite — 628 tests
+npm run test:verifier # the independent verifier's own suite — 88 tests
 ```
 
 Both compile from TypeScript first (`npm run build` / `npm run build:verifier`), then
@@ -28,19 +28,19 @@ They are not part of the standard, credential-free run.
 
 ```
 npm test:
-  tests 571
-  suites 165
-  pass 571
+  tests 628
+  suites 179
+  pass 628
   fail 0
 
 npm run test:verifier:
-  tests 58
-  suites 7
-  pass 58
+  tests 88
+  suites 13
+  pass 88
   fail 0
 ```
 
-629 tests total, 0 failures, reproduced immediately before this document was written.
+716 tests total, 0 failures, reproduced immediately before this document was written.
 
 ## What the suite is organized around
 

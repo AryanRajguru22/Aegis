@@ -28,8 +28,8 @@ app reads and when each one actually matters.
 ## Tests
 
 ```bash
-npm test              # main suite — 571 tests
-npm run test:verifier # independent verifier's own suite — 58 tests
+npm test              # main suite — 628 tests
+npm run test:verifier # independent verifier's own suite — 88 tests
 ```
 
 Every behavioral change needs a passing test suite before it's proposed — see

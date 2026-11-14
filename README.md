@@ -268,29 +268,92 @@ node verifier/dist/cli.js ledger-export.json
 `publicKeyHex` is printed in the server's own startup log. Full details, expected
 output, and a tamper walkthrough are in [`verifier/README.md`](verifier/README.md).
 
+## Configuration
+
+All configuration is by environment variable (see [`.env.example`](.env.example)). A blank
+value (`NAME=`) is treated as unset, so copying `.env.example` to `.env` boots as-is.
+`npm start` loads `.env` automatically; `npm run start:prod` / Docker read the real
+environment only.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AEGIS_DEMO_MODE` | off | `true` = deterministic stand-in judge + mock rail only; no credentials needed |
+| `PORT` | `8787` | Listen port (1–65535) |
+| `AEGIS_DB_PATH` | `./aegis.db` | SQLite file. The parent directory must already exist |
+| `AEGIS_ROOT_PRIVATE_KEY_HEX` | ephemeral | Capability-token root key. **Set for any deployment that restarts** |
+| `AEGIS_LEDGER_PRIVATE_KEY_HEX` | ephemeral | Ledger signing key. **Set for any deployment that restarts** |
+| `AEGIS_RISK_PROVIDER` | auto | `anthropic` or `gemini` (outside demo mode) |
+| `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | – | Credentials for the chosen risk judge (outside demo mode) |
+| `AEGIS_JUDGE_TIMEOUT_MS` | 8000 (45000 Gemini) | Judge timeout; timeout always escalates, never allows |
+| `STRIPE_SECRET_KEY` | – | Enables the Stripe **test-mode** rail (outside demo mode) |
+| `AEGIS_TRUST_PROXY` | off | Set to the number of reverse-proxy hops (e.g. `1`) so client IPs and HTTPS detection are correct behind a load balancer. Leave off when exposed directly |
+| `AEGIS_SIGNUP_RATE_LIMIT` | `30` | Max unauthenticated sign-ups per client IP per hour (`0` disables) |
+
+Generate the two signing keys once with `npm run keygen` and keep them in your secret
+manager. In `NODE_ENV=production` the server never prints private keys to its logs.
+
+**Security posture:** the dashboard is same-origin, so no CORS is configured (cross-origin
+pages cannot read API responses). Every response carries a CSP (no inline scripts),
+`nosniff`, frame restrictions, `no-store` on API responses, and HSTS when served over TLS.
+JSON bodies are capped at 64 KB. Errors never include stack traces.
+
 ## Deployment
 
-[`render.yaml`](render.yaml) is a Render Blueprint — build, start command, a
-persistent disk for the SQLite database, and a health check, all pointed at the same
-unmodified application described above (`AEGIS_DEMO_MODE=true`, no code changes for
-deployment). It has been verified locally (built, started with the exact production
-start command, and checked against a simulated persistent-disk path and a custom
-`PORT`) but **has not been deployed to a live public URL** — nothing here should be
-read as a running, hosted instance existing right now.
+**Health check:** `GET /healthz` → `200 {"status":"ok"}` (checks the database), `503` otherwise.
+
+### Docker
+
+```bash
+docker build -t aegis .
+docker run -d --name aegis -p 8787:8787 -v aegis-data:/data   -e AEGIS_DEMO_MODE=true   -e AEGIS_ROOT_PRIVATE_KEY_HEX=... -e AEGIS_LEDGER_PRIVATE_KEY_HEX=...   aegis
+```
+
+The image is multi-stage, runs as a non-root user, keeps the database in the `/data`
+volume, has a built-in `HEALTHCHECK`, and shuts down gracefully on `SIGTERM`
+(`docker stop` completes in about a second and flushes SQLite). Back up the SQLite file
+(`/data/aegis.db`) and, separately, the two signing keys: without the keys a restored
+database cannot verify its own history.
+
+### Render
+
+[`render.yaml`](render.yaml) is a Render Blueprint: build, start command, persistent disk,
+and `/healthz` health check. Set the two key variables in the Render dashboard and
+`AEGIS_TRUST_PROXY=1`.
+
+### What has and has not been verified
+
+Verified locally: the Docker image builds; a container starts in demo mode, reports healthy,
+keeps its data across `docker stop` / `docker start` (restart reuses the same ledger and
+records the policy epoch only once), and exits 0 on `SIGTERM`; the dashboard works under the
+CSP; the full export → independent-verifier flow returns "TRUSTED" (exit 0) on a fresh
+ledger. **Not done:** deployment to a live public URL, running behind a real TLS proxy, and
+any run with real Anthropic/Gemini/Stripe credentials.
+
+### Scaling and operational limits
+
+- **Single instance.** State is one SQLite file with a process-local ledger writer; run
+  exactly one replica per database. Horizontal scaling needs a networked store (see
+  `docs/SYSTEM_ARCHITECTURE.md` §9).
+- **The Security Lab is one shared, in-memory instance per process.** On a public
+  deployment every visitor shares it (one visitor's reset or tamper is visible to all).
+  Lab sign-ups are rate limited, and it holds no production data.
+- **Sign-ups are open** (`POST /principals`), limited per IP by `AEGIS_SIGNUP_RATE_LIMIT`.
+  Put authentication in front of the deployment if it must not be public.
+- The rate limiter is per process and in memory.
 
 ---
 
 ## Test status
 
-**629 tests passing** — 571 in the main Aegis suite (including dedicated dashboard
+**716 tests passing** — 628 in the main Aegis suite (including dedicated dashboard
 tests covering the Authority Flow view, the pipeline trace, XSS-safety of every value
 rendered from server responses, offline coverage for both the Anthropic and Gemini
-risk-judge providers, and the provider-aware judge-timeout configuration), 58 in the
+risk-judge providers, and the provider-aware judge-timeout configuration), 88 in the
 verifier's own suite — both run repeatedly with no flakes observed. Reproduce with:
 
 ```bash
-npm test              # main suite (571)
-npm run test:verifier # verifier suite (58)
+npm test              # main suite (628)
+npm run test:verifier # verifier suite (88)
 ```
 
 ## What's provable live in Demo Mode vs. what requires external credentials
@@ -344,9 +407,11 @@ npm run test:verifier # verifier suite (58)
   verifier's `--compare` mode partially mitigates this across two exports taken at
   different times; it does not solve it for one artifact examined in isolation. See
   [`verifier/README.md`](verifier/README.md) for the full explanation.
-- **Not production-ready.** This is a from-scratch technical demonstration; it has
-  not been load-tested at real scale, integrated with a real agent framework, or used
-  by real users.
+- **Hardened, but not proven at scale.** Security headers, health checks, rate-limited
+  sign-up, graceful shutdown and a Docker image are in place and verified locally (see
+  **Deployment**), but it has not been load-tested at real scale, run against live AI or
+  payment credentials, deployed to a public URL, integrated with a real agent framework,
+  or used by real users. It is a single-instance SQLite service.
 
 ## Repository structure
 
