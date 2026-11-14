@@ -41,4 +41,8 @@ export interface AppDependencies {
   idempotencyWaitTimeoutMs?: number;
   /** Purely a display flag — exposed read-only via GET /demo-mode so the dashboard can show an unmistakable banner (see src/api/demoMode.ts). Never read by any policy/risk/decision/execution code; whether intentJudge/rails are actually demo-configured is decided once, in main.ts, before AppDependencies is even constructed. Defaults to false when omitted, which is why no existing test harness needed to change. */
   demoMode?: boolean;
+  /** Liveness/readiness probe for GET /healthz: must throw if the process cannot serve (e.g. the database is unreachable). Omitted in tests, where /healthz then reports ok. */
+  healthCheck?: () => void;
+  /** Passed to Express's "trust proxy" setting (see AEGIS_TRUST_PROXY). Off by default: only enable it behind a reverse proxy you control, otherwise clients can spoof their IP. */
+  trustProxy?: boolean | number | string;
 }

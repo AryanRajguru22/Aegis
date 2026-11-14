@@ -73,10 +73,12 @@ exist the earliest is used; entries with another policy or malformed data are ig
   **HISTORICAL** (exit 3).
 - Violations **after** the marker mean the rule was in force and was not enforced (exit 1).
 
-**The API does not write this marker yet.** Until it does (a separate follow-up), every
-real ledger is "epoch not recorded" and all mission-binding violations in it are
-reported as historical — the verifier cannot tell a pre-fix violation from a post-fix one
-and says so.
+**The API writes this marker** (`src/api/policyEpoch.ts`) once per ledger, at the first
+server start under the rule (production ledger and each Security Lab instance). A ledger
+that predates the rule therefore gets its marker at the upgrade point: earlier
+unattributed spend is classified as historical, and any after it is a real violation.
+Ledgers exported from a server that never ran this version carry no marker, and the
+verifier reports their findings as historical because it cannot tell the two apart.
 
 ## What it deliberately does not trust
 

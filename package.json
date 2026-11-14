@@ -1,14 +1,16 @@
 {
   "name": "aegis",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
+  "description": "Aegis — bounded, revocable, verifiable financial authority for autonomous agents",
   "directories": {
     "doc": "docs"
   },
   "scripts": {
     "build": "tsc",
     "start": "npm run build && node --env-file-if-exists=.env --experimental-wasm-modules dist/api/main.js",
+    "start:prod": "node --experimental-wasm-modules dist/api/main.js",
+    "keygen": "npm run build && node --experimental-wasm-modules dist/api/keygen.js",
     "test:capability": "npm run build && node --experimental-wasm-modules --test dist/capability/__tests__/*.test.js",
     "test:state": "npm run build && node --experimental-wasm-modules --test dist/state/__tests__/*.test.js",
     "test:risk": "npm run build && node --experimental-wasm-modules --test dist/risk/__tests__/risk-core.test.js dist/risk/__tests__/gemini-judge.test.js",

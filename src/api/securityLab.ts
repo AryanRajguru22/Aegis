@@ -12,6 +12,7 @@ import { createSqliteMissionReservationStore } from "../mission/reservation.js";
 import { createInMemorySimulationCache } from "../decision/simulationCache.js";
 import { createDemoIntentJudge } from "./demoMode.js";
 import { createDemoTamperRouter } from "./demoTamper.js";
+import { ensureMissionBindingEpoch } from "./policyEpoch.js";
 import { errorHandler } from "./errors.js";
 import { createApp } from "./server.js";
 import type { PrincipalStore } from "../state/principals.js";
@@ -54,6 +55,8 @@ export interface SecurityLabRailOptions {
   knownPayers: Map<string, string>;
   /** The single demo payer identity's public key, hex-encoded — every agent (real or lab) shares it, matching the existing demo-scope simplification already documented in main.ts and rails/mockX402/client.ts. */
   demoPayerPublicKeyHex: string;
+  /** Forwarded to the lab app so its own security headers/IP handling match production. */
+  trustProxy?: boolean | number | string;
 }
 
 /**
@@ -79,6 +82,7 @@ export function createSecurityLab(railOpts: SecurityLabRailOptions): SecurityLab
   const ledgerKeys = generateLedgerKeyPair();
   const rawLedger = createLedgerStore(db, ledgerKeys, ledgerPublicKeyToHex(ledgerKeys.publicKey));
   const ledger = wrapWithNotifications(rawLedger);
+  ensureMissionBindingEpoch(ledger);
 
   // Mirrors main.ts's own real-ledger listener exactly: a lab agent's mock payer
   // identity must be registered with the shared mock merchant before it can settle a
@@ -102,6 +106,7 @@ export function createSecurityLab(railOpts: SecurityLabRailOptions): SecurityLab
     missions,
     reservations,
     simulationCache: createInMemorySimulationCache(),
+    trustProxy: railOpts.trustProxy,
     demoMode: true, // truthful: the lab always runs the deterministic stand-in judge, never a real provider
   });
 

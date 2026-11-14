@@ -22,6 +22,21 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     res.status(400).json({ error: "Malformed JSON in request body" });
     return;
   }
+  // Other client-caused body-parser failures (oversized body, unsupported charset or
+  // encoding) carry a 4xx status and a `type` beginning "entity." / "encoding." /
+  // "charset." — safe to report by status with a fixed message, never the raw error.
+  const parserError = err as { status?: unknown; type?: unknown };
+  if (
+    typeof parserError.type === "string" &&
+    /^(entity|encoding|charset|request)\./.test(parserError.type) &&
+    typeof parserError.status === "number" &&
+    parserError.status >= 400 &&
+    parserError.status < 500
+  ) {
+    const message = parserError.status === 413 ? "Request body too large" : "Invalid request body";
+    res.status(parserError.status).json({ error: message });
+    return;
+  }
   // eslint-disable-next-line no-console
   console.error("Unexpected API error:", err);
   res.status(500).json({ error: "Internal server error" });

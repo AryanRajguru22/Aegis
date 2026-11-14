@@ -35,6 +35,9 @@ import {
 import { GeminiIntentJudge } from "../risk/geminiJudge.js";
 import { requirePrincipalAuth } from "./auth.js";
 import { createSecurityLab } from "./securityLab.js";
+import { ensureMissionBindingEpoch } from "./policyEpoch.js";
+import { envString, parsePort, parseSignupRateLimit, parseTrustProxy } from "./config.js";
+import { createRateLimiter } from "./rateLimit.js";
 import type { AppDependencies } from "./deps.js";
 import type { IntentJudge } from "../risk/types.js";
 
@@ -51,16 +54,29 @@ async function main(): Promise<void> {
   // constructed below; nothing else in the entire pipeline is aware it exists).
   const demoMode = isDemoModeEnabled();
 
-  const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
-  const geminiApiKey = process.env.GEMINI_API_KEY;
-  const riskProvider = process.env.AEGIS_RISK_PROVIDER;
+  // envString treats a blank value (e.g. "GEMINI_API_KEY=" copied from .env.example) as
+  // unset, so an untouched .env.example boots cleanly instead of failing on "".
+  const anthropicApiKey = envString(process.env.ANTHROPIC_API_KEY);
+  const geminiApiKey = envString(process.env.GEMINI_API_KEY);
+  const riskProvider = envString(process.env.AEGIS_RISK_PROVIDER);
+  let port: number;
+  let signupRateLimit: number;
+  let trustProxy: boolean | number | string | undefined;
+  try {
+    port = parsePort(process.env.PORT);
+    signupRateLimit = parseSignupRateLimit(process.env.AEGIS_SIGNUP_RATE_LIMIT);
+    trustProxy = parseTrustProxy(process.env.AEGIS_TRUST_PROXY);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
 
   // Parsed before judge construction so a malformed value fails immediately, with its
   // own specific message — never silently ignored, never coerced. `undefined` (unset)
   // is valid here and means "use the provider-aware default computed below."
   let explicitJudgeTimeoutMs: number | undefined;
   try {
-    explicitJudgeTimeoutMs = parseExplicitJudgeTimeoutMs(process.env.AEGIS_JUDGE_TIMEOUT_MS);
+    explicitJudgeTimeoutMs = parseExplicitJudgeTimeoutMs(envString(process.env.AEGIS_JUDGE_TIMEOUT_MS));
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
@@ -130,27 +146,35 @@ async function main(): Promise<void> {
     console.warn(banner);
   }
 
-  const dbPath = process.env.AEGIS_DB_PATH ?? "./aegis.db";
+  const dbPath = envString(process.env.AEGIS_DB_PATH) ?? "./aegis.db";
   const db = openDatabase(dbPath);
   const principals = createPrincipalStore(db);
   const agents = createAgentStore(db);
 
-  const rootPrivateKeyHex = process.env.AEGIS_ROOT_PRIVATE_KEY_HEX;
+  // In production (NODE_ENV=production, as in the Dockerfile) never write a private key
+  // into the logs, which are routinely shipped to third-party aggregators.
+  const isProduction = process.env.NODE_ENV === "production";
+  const rootPrivateKeyHex = envString(process.env.AEGIS_ROOT_PRIVATE_KEY_HEX);
   const rootKeys = rootPrivateKeyHex ? loadRootKeyPairFromHex(rootPrivateKeyHex) : generateRootKeyPair();
   if (!rootPrivateKeyHex) {
     console.warn(
       `No AEGIS_ROOT_PRIVATE_KEY_HEX set — generated an ephemeral root key for this process only. ` +
-        `Every previously-issued token will fail to verify on restart. For a persistent deployment, set ` +
-        `AEGIS_ROOT_PRIVATE_KEY_HEX=${privateKeyToHex(rootKeys.privateKey)}`
+        `Every previously-issued token will fail to verify on restart. For a persistent deployment, ` +
+        (isProduction
+          ? `run "npm run keygen" once and store the output in your secret manager.`
+          : `set AEGIS_ROOT_PRIVATE_KEY_HEX=${privateKeyToHex(rootKeys.privateKey)}`)
     );
   }
 
-  const ledgerPrivateKeyHex = process.env.AEGIS_LEDGER_PRIVATE_KEY_HEX;
+  const ledgerPrivateKeyHex = envString(process.env.AEGIS_LEDGER_PRIVATE_KEY_HEX);
   const ledgerKeys = ledgerPrivateKeyHex ? ledgerKeyPairFromPrivateHex(ledgerPrivateKeyHex) : generateLedgerKeyPair();
   if (!ledgerPrivateKeyHex) {
     console.warn(
       `No AEGIS_LEDGER_PRIVATE_KEY_HEX set — generated an ephemeral ledger signing key. For a persistent ` +
-        `deployment, set AEGIS_LEDGER_PRIVATE_KEY_HEX=${ledgerPrivateKeyToHex(ledgerKeys.privateKey)}`
+        `deployment, ` +
+        (isProduction
+          ? `run "npm run keygen" once and store the output in your secret manager.`
+          : `set AEGIS_LEDGER_PRIVATE_KEY_HEX=${ledgerPrivateKeyToHex(ledgerKeys.privateKey)}`)
     );
   }
   const ledgerPublicKeyHex = ledgerPublicKeyToHex(ledgerKeys.publicKey);
@@ -160,6 +184,9 @@ async function main(): Promise<void> {
   console.warn(`Ledger PUBLIC VERIFICATION KEY (safe to share — use with the independent verifier): ${ledgerPublicKeyHex}`);
   const rawLedger = createLedgerStore(db, ledgerKeys, ledgerPublicKeyHex);
   const ledger = wrapWithNotifications(rawLedger);
+  if (ensureMissionBindingEpoch(ledger)) {
+    console.warn("Recorded the mission-binding policy epoch in the ledger (first start under this policy).");
+  }
 
   // Demo-scope simplification, consistent with the one already documented in
   // rails/mockX402/client.ts: every agent shares one demo payer identity on the mock
@@ -203,7 +230,7 @@ async function main(): Promise<void> {
   // src/api/demoMode.ts) independently enforces the same guarantee a second time.
   let stripeAdapter: RailAdapter | undefined;
   if (!demoMode) {
-    const stripeKey = process.env.STRIPE_SECRET_KEY;
+    const stripeKey = envString(process.env.STRIPE_SECRET_KEY);
     if (stripeKey) {
       stripeAdapter = new StripeTestRailAdapter({ apiKey: stripeKey });
     } else {
@@ -238,6 +265,10 @@ async function main(): Promise<void> {
     reservations,
     simulationCache: createInMemorySimulationCache(),
     demoMode,
+    trustProxy,
+    healthCheck: () => {
+      db.prepare("SELECT 1").get();
+    },
   };
 
   const app = createApp(deps);
@@ -258,12 +289,22 @@ async function main(): Promise<void> {
   // demo-only route used to be mounted (see the removed comment this replaces):
   // createApp()'s own catch-all/error handler are already the last middleware inside
   // `app`, so anything meant to be reached first has to live on an outer app.
-  let lab = createSecurityLab({ mockX402Rail, knownPayers, demoPayerPublicKeyHex: publicKeyToHex(demoPayer.publicKey) });
+  const labOptions = { mockX402Rail, knownPayers, demoPayerPublicKeyHex: publicKeyToHex(demoPayer.publicKey), trustProxy };
+  let lab = createSecurityLab(labOptions);
   const requirePrincipal = requirePrincipalAuth(principals);
 
   const wrapper = express();
+  wrapper.disable("x-powered-by");
+  if (trustProxy !== undefined) wrapper.set("trust proxy", trustProxy);
+  // The two unauthenticated, state-creating endpoints. Sign-ups are open by design (the
+  // dashboard registers a principal on first use); the limiter bounds abuse per client
+  // IP. The lab keeps everything in memory, so an unbounded stream of lab sign-ups would
+  // otherwise be a memory-exhaustion vector. AEGIS_SIGNUP_RATE_LIMIT=0 disables it.
+  if (signupRateLimit > 0) {
+    wrapper.post(["/principals", "/lab/principals"], createRateLimiter({ max: signupRateLimit, windowMs: 60 * 60 * 1000 }));
+  }
   wrapper.post("/lab/reset", requirePrincipal, (_req, res) => {
-    lab = createSecurityLab({ mockX402Rail, knownPayers, demoPayerPublicKeyHex: publicKeyToHex(demoPayer.publicKey) });
+    lab = createSecurityLab(labOptions);
     res.status(200).json({ reset: true });
   });
   wrapper.use("/lab", (req, res, next) => lab.app(req, res, next));
@@ -271,12 +312,48 @@ async function main(): Promise<void> {
   wrapper.use(app);
   const listener = wrapper;
 
-  const port = Number(process.env.PORT ?? 8787);
-  listener.listen(port, () => {
+  const server = listener.listen(port, () => {
     console.log(`Aegis listening on http://localhost:${port}`);
     console.log(`Dashboard: http://localhost:${port}/`);
     console.log(`Security Demonstration Lab (isolated, always available): http://localhost:${port}/lab`);
   });
+  server.on("error", (error) => {
+    console.error("Aegis failed to listen:", error);
+    process.exit(1);
+  });
+
+  // Graceful shutdown (SIGTERM from Docker/Render, SIGINT from a terminal): stop taking
+  // new connections, drop long-lived SSE streams so close() can finish, then close the
+  // merchant and flush/close SQLite so the WAL is checkpointed. A hard exit after 10s
+  // guards against a stuck connection.
+  let shuttingDown = false;
+  const shutdown = (signal: string): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.warn(`${signal} received — shutting down`);
+    const force = setTimeout(() => {
+      console.error("Shutdown timed out — forcing exit");
+      process.exit(1);
+    }, 10_000);
+    force.unref();
+    server.close(() => {
+      mockX402Server
+        .close()
+        .catch((error: unknown) => console.error("Mock merchant close failed:", error))
+        .finally(() => {
+          try {
+            db.close();
+          } catch (error) {
+            console.error("Database close failed:", error);
+          }
+          console.warn("Shutdown complete");
+          process.exit(0);
+        });
+    });
+    server.closeAllConnections();
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 main().catch((error) => {

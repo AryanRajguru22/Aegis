@@ -5,7 +5,7 @@ services:
     plan: starter
     buildCommand: npm ci && npm run build
     startCommand: node --experimental-wasm-modules dist/api/main.js
-    healthCheckPath: /demo-mode
+    healthCheckPath: /healthz
     envVars:
       - key: AEGIS_DEMO_MODE
         value: "true"

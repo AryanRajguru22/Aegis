@@ -4,6 +4,7 @@ import "./types.js";
 import type { AppDependencies } from "./deps.js";
 import { requireAgentToken, requirePrincipalAuth } from "./auth.js";
 import { errorHandler } from "./errors.js";
+import { securityHeaders } from "./securityHeaders.js";
 import { createPrincipalsRouter } from "./routes/principals.js";
 import { createAgentsRouter } from "./routes/agents.js";
 import { createMissionsRouter } from "./routes/missions.js";
@@ -23,7 +24,11 @@ import { createStreamRouter } from "./routes/stream.js";
 export function createApp(deps: AppDependencies): Express {
   const app = express();
   app.disable("x-powered-by");
-  app.use(express.json());
+  if (deps.trustProxy !== undefined) app.set("trust proxy", deps.trustProxy);
+  app.use(securityHeaders);
+  // 64kb is far above any legitimate request (the largest body is a mission/caveat
+  // document); a smaller cap limits what an unauthenticated caller can make us parse.
+  app.use(express.json({ limit: "64kb" }));
   // The dashboard (public/index.html, public/app.js) is static and talks to the API
   // exclusively over the same routes exercised in src/api/__tests__ — it has no
   // server-side rendering and no access of its own to anything privileged.
@@ -38,6 +43,18 @@ export function createApp(deps: AppDependencies): Express {
   // instance (see risk/types.ts's IntentJudge.provider/.model, set truthfully by each
   // of the three real implementations) — never a second, independently-tracked value
   // that could drift from what actually judges each transaction.
+  // Probe for load balancers / orchestrators. Deliberately returns no detail — a failing
+  // check is logged server-side and surfaces to callers only as a 503.
+  app.get("/healthz", (_req, res) => {
+    try {
+      deps.healthCheck?.();
+      res.status(200).json({ status: "ok" });
+    } catch (error) {
+      console.error("Health check failed:", error);
+      res.status(503).json({ status: "unavailable" });
+    }
+  });
+
   app.get("/demo-mode", (_req, res) => {
     res.status(200).json({
       demoMode: Boolean(deps.demoMode),

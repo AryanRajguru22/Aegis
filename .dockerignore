@@ -1,0 +1,13 @@
+node_modules
+dist
+verifier/dist
+.git
+.github
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+*.log
+docs
+verifier
