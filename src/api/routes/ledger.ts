@@ -28,7 +28,7 @@ export function createLedgerRouter(deps: AppDependencies, requirePrincipal: Requ
    * Entries within a page are always in ascending seq order. `chainValid` always describes
    * the WHOLE global hash chain, never the page — paging cannot hide a broken link.
    */
-  router.get("/ledger", requirePrincipal, (req, res) => {
+  router.get("/ledger", requirePrincipal, async (req, res) => {
     const principalId = req.principalId!;
     const agentIdFilter = typeof req.query.agentId === "string" ? req.query.agentId : undefined;
     const limit = parsePositiveInt(req.query.limit, "limit", MAX_PAGE_LIMIT);
@@ -65,7 +65,10 @@ export function createLedgerRouter(deps: AppDependencies, requirePrincipal: Requ
     // those three failed) — safe to expose, and exactly what a truthful "TAMPERED"
     // state needs to point at. Never populated when valid — see ChainVerification's
     // own contract (src/state/ledger.ts).
-    const verification = deps.ledger.verifyChain();
+    // Cooperative (yields between batches, one shared pass for concurrent callers): the synchronous
+    // verifyChain() blocked the whole server for ~2s at 10k entries (see docs/LOAD_TESTING.md). The
+    // result is identical — every call still verifies the WHOLE chain.
+    const verification = await deps.ledger.verifyChainAsync();
     res.status(200).json({
       entries,
       chainValid: verification.valid,

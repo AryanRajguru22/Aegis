@@ -28,6 +28,13 @@ export interface ChainVerification {
 export interface LedgerStore {
   append(entry: LedgerEntryInput): LedgerEntry;
   verifyChain(): ChainVerification;
+  /**
+   * The same full-chain verification with the same result, but it yields to the event loop
+   * between small batches of rows and shares one in-flight pass between concurrent callers.
+   * Use this on request paths: the synchronous verifyChain() blocks every other request for
+   * the whole pass (~2s at 10k entries, measured).
+   */
+  verifyChainAsync(): Promise<ChainVerification>;
   listByAgent(agentId: string): LedgerEntry[];
   listByPrincipal(principalId: string): LedgerEntry[];
   all(): LedgerEntry[];
@@ -160,55 +167,109 @@ export function createLedgerStore(
     return { ...result };
   }
 
+  /** Checks one row against the running chain state. Returns the failure, or undefined if the row is sound. Shared by the sync and async passes so they can never disagree. */
+  function checkRow(row: Record<string, unknown>, expectedPrevHash: string): ChainVerification | undefined {
+    const entry = rowToEntry(row);
+
+    if (entry.prevHash !== expectedPrevHash) {
+      return {
+        valid: false,
+        brokenAtSeq: entry.seq,
+        reason: "prevHash does not match the previous entry's content hash — the chain link is broken",
+      };
+    }
+
+    const recomputed = sha256Hex(
+      canonicalContent({
+        kind: entry.kind,
+        agentId: entry.agentId,
+        principalId: entry.principalId,
+        data: entry.data,
+        createdAt: entry.createdAt,
+        prevHash: entry.prevHash,
+      })
+    );
+    if (recomputed !== entry.contentHash) {
+      return {
+        valid: false,
+        brokenAtSeq: entry.seq,
+        reason: "stored content hash does not match the entry's own fields — the entry's content was modified after being written",
+      };
+    }
+
+    if (!verify(keys.publicKey, entry.contentHash, entry.signature)) {
+      return {
+        valid: false,
+        brokenAtSeq: entry.seq,
+        reason: "signature verification failed — the hash was changed without access to the ledger's private key",
+      };
+    }
+    return undefined;
+  }
+
   function verifyChainFull(): ChainVerification {
     options.onFullVerification?.();
     const rows = allStmt.all() as Array<Record<string, unknown>>;
     let expectedPrevHash = GENESIS_HASH;
     for (const row of rows) {
-      const entry = rowToEntry(row);
-
-      if (entry.prevHash !== expectedPrevHash) {
-        return {
-          valid: false,
-          brokenAtSeq: entry.seq,
-          reason: "prevHash does not match the previous entry's content hash — the chain link is broken",
-        };
-      }
-
-      const recomputed = sha256Hex(
-        canonicalContent({
-          kind: entry.kind,
-          agentId: entry.agentId,
-          principalId: entry.principalId,
-          data: entry.data,
-          createdAt: entry.createdAt,
-          prevHash: entry.prevHash,
-        })
-      );
-      if (recomputed !== entry.contentHash) {
-        return {
-          valid: false,
-          brokenAtSeq: entry.seq,
-          reason: "stored content hash does not match the entry's own fields — the entry's content was modified after being written",
-        };
-      }
-
-      if (!verify(keys.publicKey, entry.contentHash, entry.signature)) {
-        return {
-          valid: false,
-          brokenAtSeq: entry.seq,
-          reason: "signature verification failed — the hash was changed without access to the ledger's private key",
-        };
-      }
-
-      expectedPrevHash = entry.contentHash;
+      const failure = checkRow(row, expectedPrevHash);
+      if (failure) return failure;
+      expectedPrevHash = String(row.content_hash);
     }
     return { valid: true };
+  }
+
+  // Cooperative variant: the rows examined are exactly those with seq <= the maximum at the
+  // moment the pass STARTS (entries are append-only, so rows added during the pass are simply
+  // outside this snapshot, like writes that land right after a synchronous check). The memo is
+  // stored under the token taken at the start, so any write — including one that lands mid-pass
+  // — makes the next call verify again. Concurrent callers for the same token share one pass,
+  // so a loop of /ledger reads cannot multiply the CPU cost.
+  const maxSeqStmt = db.prepare(`SELECT COALESCE(MAX(seq), 0) AS m FROM ledger_entries`);
+  const batchStmt = db.prepare(`SELECT * FROM ledger_entries WHERE seq > :after AND seq <= :max ORDER BY seq ASC LIMIT :limit`);
+  const ASYNC_BATCH_ROWS = 200; // ~30ms of work per batch at ~160us/entry
+  let inflight: { token: string; promise: Promise<ChainVerification> } | undefined;
+
+  async function verifyChainCooperatively(token: string): Promise<ChainVerification> {
+    options.onFullVerification?.();
+    const max = Number((maxSeqStmt.get() as { m: number }).m);
+    let after = 0;
+    let expectedPrevHash = GENESIS_HASH;
+    let result: ChainVerification = { valid: true };
+    while (after < max) {
+      const rows = batchStmt.all({ after, max, limit: ASYNC_BATCH_ROWS }) as Array<Record<string, unknown>>;
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        const failure = checkRow(row, expectedPrevHash);
+        if (failure) {
+          result = failure;
+          break;
+        }
+        expectedPrevHash = String(row.content_hash);
+        after = Number(row.seq);
+      }
+      if (!result.valid) break;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    memo = { token, result };
+    return result;
+  }
+
+  function verifyChainAsync(): Promise<ChainVerification> {
+    const token = changeToken();
+    if (memo && memo.token === token) return Promise.resolve({ ...memo.result });
+    if (inflight && inflight.token === token) return inflight.promise.then((r) => ({ ...r }));
+    const promise = verifyChainCooperatively(token).finally(() => {
+      if (inflight && inflight.promise === promise) inflight = undefined;
+    });
+    inflight = { token, promise };
+    return promise.then((r) => ({ ...r }));
   }
 
   return {
     append,
     verifyChain,
+    verifyChainAsync,
     listByAgent: (agentId) => (byAgentStmt.all({ agent_id: agentId }) as Array<Record<string, unknown>>).map(rowToEntry),
     listByPrincipal: (principalId) =>
       (byPrincipalStmt.all({ principal_id: principalId }) as Array<Record<string, unknown>>).map(rowToEntry),
