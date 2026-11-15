@@ -192,6 +192,33 @@ describe("mission reservation — release restores capacity, safely", () => {
     assert.deepEqual(reservations.reserve("mission-1", 250_000, nextScopedKey()), { kind: "insufficient_budget" });
   });
 
+  test("ADVERSARIAL: a double-release for one reservation cannot consume ANOTHER in-flight reservation on the same mission (release is ticket-bound)", () => {
+    const { reservations, db } = setup(200_000);
+    const keyA = nextScopedKey();
+    const keyB = nextScopedKey();
+    assert.equal(reservations.reserve("mission-1", 100_000, keyA).kind, "reserved");
+    assert.equal(reservations.reserve("mission-1", 100_000, keyB).kind, "reserved");
+
+    reservations.release("mission-1", 100_000, keyA);
+    reservations.release("mission-1", 100_000, keyA); // buggy/replayed second release of A
+    assert.equal(getMissionRow(db, "mission-1").reserved_minor_units, 100_000, "B's reservation must still be fully held");
+    assert.deepEqual(reservations.reserve("mission-1", 150_000, nextScopedKey()), { kind: "insufficient_budget" }, "B is still protected from over-commit");
+  });
+
+  test("ADVERSARIAL: releasing with a key that has no ticket, or the wrong mission/amount for its ticket, is a no-op", () => {
+    const { reservations, db } = setup(200_000);
+    const key = nextScopedKey();
+    reservations.reserve("mission-1", 80_000, key);
+    reservations.release("mission-1", 80_000, nextScopedKey()); // unknown key
+    reservations.release("mission-1", 40_000, key); // right key, wrong amount
+    reservations.release("mission-other", 80_000, key); // right key, wrong mission
+    assert.equal(getMissionRow(db, "mission-1").reserved_minor_units, 80_000);
+    assert.equal(getTicketCount(db), 1);
+    reservations.release("mission-1", 80_000, key); // the exact reservation
+    assert.equal(getMissionRow(db, "mission-1").reserved_minor_units, 0);
+    assert.equal(getTicketCount(db), 0);
+  });
+
   test("release() rejects a non-positive-integer amount just like reserve() does", () => {
     const { reservations } = setup();
     const key = nextScopedKey();

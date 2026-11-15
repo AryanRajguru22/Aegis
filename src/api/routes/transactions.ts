@@ -166,6 +166,29 @@ function missionNotFoundMessage(missionId: string): string {
   return `Mission "${missionId}" not found`;
 }
 
+/**
+ * Synchronous re-check of the mission layer, run immediately before a rail is invoked
+ * (see ExecuteDependencies.preExecutionGuard). The first checks happened before the
+ * intent judge's await; this closes that window for mission cancellation/expiry and for
+ * the sticky mission-binding rule (a mission-less request in flight when the agent's
+ * first mission is created — audit finding F5).
+ */
+function recheckMissionBeforeRail(
+  deps: AppDependencies,
+  agentId: string,
+  missionId: string | undefined
+): { ok: true } | { ok: false; reason: string } {
+  if (missionId === undefined) {
+    const binding = evaluateMissionBinding(deps, agentId);
+    return binding.bound ? { ok: false, reason: binding.reason } : { ok: true };
+  }
+  const mission = deps.missions.get(missionId);
+  if (!mission) return { ok: false, reason: `Mission "${missionId}" no longer exists` };
+  const current = reconcileMissionExpiry(deps, mission);
+  if (current.status !== "active") return { ok: false, reason: `Mission is no longer active (status: "${current.status}")` };
+  return { ok: true };
+}
+
 function evaluateMissionGate(
   deps: AppDependencies,
   agent: { agentId: string; principalId: string; caveats: Record<string, unknown> },
@@ -515,6 +538,9 @@ export function createTransactionsRouter(deps: AppDependencies, requireAgent: Re
           ledger: deps.ledger,
           intentJudge: deps.intentJudge,
           rails: deps.rails,
+          // Last-moment re-check of mission state (cancelled/expired/newly-bound) — the
+          // intent judge above can take seconds, during which the mission layer may change.
+          preExecutionGuard: () => recheckMissionBeforeRail(deps, agent.agentId, missionId),
           baselineWindow: deps.baselineWindow,
           judgeTimeoutMs: deps.judgeTimeoutMs,
           cachedIntentJudgment: cached?.intentJudgment,

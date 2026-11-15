@@ -197,6 +197,11 @@ export function createSqliteMissionReservationStore(db: DatabaseSync): MissionRe
     VALUES (:scoped_key, :mission_id, :amount_minor_units, :created_at)
   `);
   const deleteTicketStmt = db.prepare(`DELETE FROM mission_reservation_tickets WHERE scoped_key = :scoped_key`);
+  // Deletes the ticket ONLY if it matches this exact (key, mission, amount) triple.
+  const consumeTicketStmt = db.prepare(`
+    DELETE FROM mission_reservation_tickets
+    WHERE scoped_key = :scoped_key AND mission_id = :mission_id AND amount_minor_units = :amount
+  `);
 
   reconcileMissionReservations(db);
 
@@ -238,16 +243,19 @@ export function createSqliteMissionReservationStore(db: DatabaseSync): MissionRe
 
     db.exec("BEGIN");
     try {
-      // No branching on the result: releasing more than is currently reserved (a
-      // double-release, or a release with no matching prior reserve) is guarded by
-      // the WHERE clause itself and simply does nothing — reserved_minor_units can
-      // never be pushed below zero, and a release can never increase anyone's
-      // effective authority, so silently no-op-ing here is safe by construction,
-      // exactly like idempotency.ts's release() on an already-completed or
-      // never-claimed key. The ticket delete is likewise a harmless no-op if none
-      // exists for this scoped_key.
-      releaseStmt.run({ mission_id: missionId, amount: amountMinorUnits });
-      deleteTicketStmt.run({ scoped_key: scopedKey });
+      // A release is ticket-bound: capacity is given back only if THIS exact
+      // (scoped_key, mission, amount) reservation is still outstanding, and consuming
+      // the ticket and decrementing happen in the same transaction. A double-release,
+      // or a release for a reservation that never existed or was already resolved, is
+      // therefore a safe no-op — crucially it can never eat into ANOTHER in-flight
+      // request's reservation on the same mission, which a bare "reserved >= amount"
+      // guard alone would allow (two concurrent 100k reservations, one released twice,
+      // would leave the second unprotected and let budget be over-committed).
+      // The WHERE clause still keeps reserved_minor_units from going negative.
+      const consumed = consumeTicketStmt.run({ scoped_key: scopedKey, mission_id: missionId, amount: amountMinorUnits });
+      if (consumed.changes === 1) {
+        releaseStmt.run({ mission_id: missionId, amount: amountMinorUnits });
+      }
       db.exec("COMMIT");
     } catch (error) {
       db.exec("ROLLBACK");

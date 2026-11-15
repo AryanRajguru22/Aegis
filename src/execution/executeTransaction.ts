@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { decideTransaction } from "../decision/decide.js";
+import { verifyTransaction } from "../capability/authorize.js";
+import type { VerifyResult } from "../capability/types.js";
 import type { RailExecutionResult } from "../rails/types.js";
 import type { ExecuteDependencies, ExecuteTransactionInput, ExecuteTransactionResult } from "./types.js";
 
 export const LEDGER_KIND_EXECUTION_RESULT = "execution_result";
+/** Written when an "allow" verdict is withdrawn at the last moment, before any rail was called. */
+export const LEDGER_KIND_PRE_EXECUTION_RECHECK = "pre_execution_recheck";
 
 /**
  * The final lifecycle stage described in docs/SYSTEM_ARCHITECTURE.md §2: decide, then
@@ -22,6 +26,23 @@ export async function executeTransaction(
 
   if (decision.verdict !== "allow") {
     return { decision };
+  }
+
+  // Re-check at the last possible moment. decideTransaction verified the capability at
+  // its start, but then awaited the intent judge (up to the judge timeout — seconds), and
+  // a revocation, token expiry, or mission cancellation landing in that window must still
+  // stop the payment. Everything from here to adapter.execute() is synchronous, so no
+  // further change can interleave between this check and the rail call.
+  const blocked = recheckBeforeRail(input, deps, decision.policy);
+  if (blocked) {
+    const reason = `Authority changed while this transaction was being evaluated — execution withdrawn before any rail was called: ${blocked.reason}`;
+    deps.ledger.append({
+      kind: LEDGER_KIND_PRE_EXECUTION_RECHECK,
+      agentId: input.agentId,
+      principalId: input.principalId,
+      data: { allowed: false, reason, originalVerdict: "allow", stage: blocked.stage, transaction: input.transaction },
+    });
+    return { decision: { verdict: "deny", reason, policy: blocked.policy, risk: decision.risk } };
   }
 
   const adapter = deps.rails.get(input.transaction.rail);
@@ -74,4 +95,33 @@ export async function executeTransaction(
   });
 
   return { decision, execution };
+}
+
+/** Returns undefined when execution may proceed; otherwise why it must not. Fails closed on any exception. */
+function recheckBeforeRail(
+  input: ExecuteTransactionInput,
+  deps: ExecuteDependencies,
+  originalPolicy: VerifyResult
+): { stage: "capability" | "guard"; reason: string; policy: VerifyResult } | undefined {
+  try {
+    const policy = verifyTransaction(input.tokenBase64, input.rootPublicKey, input.transaction, deps.revocationStore);
+    if (!policy.allowed) {
+      return { stage: "capability", reason: policy.reason ?? "capability no longer authorizes this transaction", policy };
+    }
+  } catch (error) {
+    const reason = `capability re-verification failed (${error instanceof Error ? error.message : String(error)})`;
+    return { stage: "capability", reason, policy: { ...originalPolicy, allowed: false, reason } };
+  }
+  if (deps.preExecutionGuard) {
+    try {
+      const guard = deps.preExecutionGuard();
+      if (!guard.ok) {
+        return { stage: "guard", reason: guard.reason, policy: { ...originalPolicy, allowed: false, reason: guard.reason } };
+      }
+    } catch (error) {
+      const reason = `pre-execution guard failed (${error instanceof Error ? error.message : String(error)})`;
+      return { stage: "guard", reason, policy: { ...originalPolicy, allowed: false, reason } };
+    }
+  }
+  return undefined;
 }

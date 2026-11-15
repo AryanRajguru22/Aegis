@@ -43,10 +43,10 @@ not restore unrestricted mission-less spending. The property is derived from the
 `missions` table (rows are never deleted), so it is durable across restarts and applies
 to legacy agents without a migration. Unknown and not-yours mission ids return an
 identical `404`; malformed ids return `400`.
-*Limitation:* a mission-less request already past this check and awaiting the intent
-judge when an agent's first mission is created is not re-checked before it reaches the
-rail (tracked as F5). Spend recorded before this rule existed is not rewritten, and the
-independent verifier does not yet report it (tracked as the F1 verifier work).
+A mission-less request already past this check and awaiting the intent judge when an
+agent's first mission is created is re-checked immediately before the rail (see §4,
+"Last-moment re-check") and denied. Spend recorded before this rule existed is not
+rewritten; the independent verifier reports it as a `legacy` binding violation.
 
 ## 4. Revocation
 
@@ -59,11 +59,26 @@ scenario demonstrates this directly: the same transaction that succeeds before
 revocation is denied immediately after, by the real capability layer, not a scripted
 before/after.
 
-**Known edge case, not solved**: an in-flight transaction already past the capability
-check and mid-execution at a rail when a revocation lands is not guaranteed-cancellable.
-The demo scopes this by keeping that window short; full transactional guarantees here
-are named in [SYSTEM_ARCHITECTURE.md](SYSTEM_ARCHITECTURE.md) §6 as production
-hardening work, not claimed as solved.
+**Last-moment re-check (closes the judge-wait window).** `decideTransaction` verifies the
+capability at its start and then awaits the intent judge — up to 8s (Anthropic/demo) or
+45s (Gemini) by default. A revocation, token expiry, or mission cancel/expiry landing in
+that window used to still reach the rail. `executeTransaction`
+(`src/execution/executeTransaction.ts`) now re-runs `verifyTransaction` (revocation
+ancestry + expiry + caveats) and a caller-supplied synchronous `preExecutionGuard`
+(`src/api/routes/transactions.ts`: mission still active and unexpired; or, for a
+mission-less request, the agent still not mission-bound — this also closes the earlier
+"F5" gap) **immediately before** `adapter.execute()`, with no `await` in between. On
+failure the rail is never called, the response is a `deny`, a `pre_execution_recheck`
+ledger entry records the withdrawal (the earlier `allow` decision entry is not
+rewritten — the ledger is append-only), and the existing non-allow path returns the
+reservation. Proven by `src/api/__tests__/api-pre-rail-recheck.test.ts`, which holds the
+judge open on a test-controlled promise, revokes/cancels/expires while the request is
+provably in flight, and asserts zero rail calls (6 of its 7 tests fail if the re-check
+is removed).
+
+**Remaining edge case**: a revocation that lands *after* the rail call has begun (while a
+real network request to a rail such as Stripe is outstanding) cannot recall that request.
+The window is now only the rail's own latency, not the judge's.
 
 ## 5. Idempotency and crash safety
 

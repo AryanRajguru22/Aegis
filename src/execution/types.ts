@@ -17,8 +17,20 @@ export interface ExecuteTransactionInput extends DecideTransactionInput {
   idempotencyKey?: string;
 }
 
+/** Outcome of the caller-supplied last-moment check run immediately before a rail is invoked. */
+export type PreExecutionGuardResult = { ok: true } | { ok: false; reason: string };
+
 export interface ExecuteDependencies extends DecideDependencies {
   rails: RailRegistry;
+  /**
+   * Synchronous last-moment guard for state that can change while a transaction is
+   * awaiting the (slow, network-bound) intent judge — e.g. its mission being cancelled
+   * or expired, or its agent being bound to a mission. Called only after an "allow"
+   * verdict and immediately before the rail adapter, with no await in between. Returning
+   * `{ ok: false }` blocks the rail call. Capability revocation and expiry are NOT this
+   * guard's job: executeTransaction re-verifies the capability token itself.
+   */
+  preExecutionGuard?: () => PreExecutionGuardResult;
 }
 
 export interface ExecuteTransactionResult {
