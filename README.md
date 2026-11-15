@@ -345,14 +345,14 @@ any run with real Anthropic/Gemini/Stripe credentials.
 
 ## Test status
 
-**716 tests passing** — 628 in the main Aegis suite (including dedicated dashboard
+**756 tests passing** — 668 in the main Aegis suite (including dedicated dashboard
 tests covering the Authority Flow view, the pipeline trace, XSS-safety of every value
 rendered from server responses, offline coverage for both the Anthropic and Gemini
 risk-judge providers, and the provider-aware judge-timeout configuration), 88 in the
-verifier's own suite — both run repeatedly with no flakes observed. Reproduce with:
+verifier's own suite. (One intermittent failure of an unrelated capability test was seen once under full-suite load and did not reproduce in 6 isolated runs; it is not yet root-caused.) Reproduce with:
 
 ```bash
-npm test              # main suite (628)
+npm test              # main suite (668)
 npm run test:verifier # verifier suite (88)
 ```
 

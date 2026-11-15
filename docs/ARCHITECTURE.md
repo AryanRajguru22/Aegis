@@ -77,7 +77,8 @@ dashboard XSS/regression tests, which assert on the exact shapes those modules r
 | `POST` | `/missions/:id/cancel` | cancel a mission |
 | `POST` | `/simulate` | dry-run a transaction through the full decision pipeline, no execution |
 | `POST` | `/transactions` | submit a transaction for real evaluation + (if allowed) execution |
-| `GET` | `/ledger` | query the hash-chained audit ledger |
+| `GET` | `/ledger` | the principal's slice of the hash-chained ledger. Optional `agentId`, `kind`, `limit` (1–1000, newest N), `beforeSeq` (cursor); `chainValid` always covers the WHOLE chain. Also returns the public `ledgerPublicKey` |
+| `GET` | `/healthz`, `/readyz` | liveness (no dependencies) / readiness (database answers) |
 | `GET` | `/stream` | Server-Sent Events stream of live decisions, feeding the dashboard's live feed |
 | `GET` | `/demo-mode` | unauthenticated — is this instance running with `AEGIS_DEMO_MODE=true` |
 

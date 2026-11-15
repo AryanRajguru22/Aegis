@@ -98,7 +98,11 @@ describe("hash-chain verification is completely independent of the AI risk provi
     const { apiKey } = await createPrincipalAndAgent(app);
     const res = await request(app).get("/ledger").set("Authorization", `Bearer ${apiKey}`);
     assert.equal(res.status, 200);
-    assert.equal(Object.keys(res.body).sort().join(","), "brokenAtSeq,chainValid,entries,reason");
+    // The exact key set is pinned on purpose: no AI-provider-derived field may ever appear
+    // here. `ledgerPublicKey` is the ledger's Ed25519 PUBLIC verification key (used by the
+    // dashboard to show a ready-to-run independent-verifier command) — public by design.
+    assert.equal(Object.keys(res.body).sort().join(","), "brokenAtSeq,chainValid,entries,ledgerPublicKey,reason");
+    assert.match(res.body.ledgerPublicKey, /^[0-9a-f]{88}$/, "an Ed25519 SPKI public key (44 bytes) in hex");
   });
 });
 

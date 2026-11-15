@@ -3,7 +3,7 @@
 ## Commands
 
 ```bash
-npm test              # main Aegis suite — 628 tests
+npm test              # main Aegis suite — 668 tests
 npm run test:verifier # the independent verifier's own suite — 88 tests
 ```
 
@@ -28,9 +28,9 @@ They are not part of the standard, credential-free run.
 
 ```
 npm test:
-  tests 628
-  suites 179
-  pass 628
+  tests 668
+  suites 192
+  pass 668
   fail 0
 
 npm run test:verifier:
@@ -40,7 +40,7 @@ npm run test:verifier:
   fail 0
 ```
 
-716 tests total, 0 failures, reproduced immediately before this document was written.
+756 tests total, 0 failures, plus `npm run e2e` (production-mode boot, restart persistence, tampered-ledger detection by the independent verifier) passing, on the final run before this document was updated. One unrelated capability test (`extractRootFacts … recovers principalId and delegatedGoal`) failed once during a full-suite run and did not reproduce in six isolated runs or any later full run; it is not root-caused.
 
 ## What the suite is organized around
 
@@ -52,6 +52,8 @@ npm run test:verifier:
 | Decision | `src/decision/__tests__/decision-core.test.ts` | `combineRiskSignals()`'s full truth table — every combination of intent-judge verdict and baseline flags maps to the correct allow/deny/escalate, including the cases proving a passing intent judgment can never suppress a behavioral flag or vice versa |
 | Risk | `src/risk/__tests__/risk-core.test.ts`, `gemini-judge.test.ts` | The behavioral-baseline heuristics in isolation (rate-window boundaries, the amount-deviation multiplier, transactions outside the rate window correctly not counting), plus `GeminiIntentJudge`'s response-parsing and error-handling logic against a fake, injected client — no network |
 | Execution | `src/execution/__tests__/execution-core.test.ts` | Rail-agnostic execution dispatch |
+| Pre-rail recheck | `src/api/__tests__/api-pre-rail-recheck.test.ts` | Holds the intent judge open on a test-controlled promise, then revokes the agent / cancels or expires the mission / creates the agent's first mission while the request is provably in flight; asserts the rail is never called, the reservation returns, and a `pre_execution_recheck` entry is ledgered. 6 of its 7 tests fail if the re-check is removed (verified) |
+| Ledger paging & memo | `src/api/__tests__/api-ledger-pagination.test.ts`, `src/state/__tests__/ledger-verification-memo.test.ts`, `src/api/__tests__/dashboard-evidence-paging.test.ts` | Cursor paging reassembles the full history without gaps; `chainValid` covers the whole chain not the page; the `verifyChain` memo never hides tampering (in-process UPDATE/DELETE and an out-of-band write from a separate connection are all detected); Evidence UI paging/filter/detail |
 | Rails | `src/rails/__tests__/mock-x402-rail.test.ts`, `stripe-rail.test.ts` | Both rail adapters' non-credentialed behavior (fixed price-catalog matching for mock_x402; request shaping for the Stripe adapter without ever calling the real network) |
 | API | `src/api/__tests__/api-*.test.ts` | End-to-end route behavior: auth, idempotency under real concurrency, restart/crash-recovery of in-flight claims, mission integration, rail integration |
 | Dashboard | `src/api/__tests__/dashboard-*.test.ts` | `public/app.js` loaded via `node:vm` and exercised directly — the Authority Flow rendering, the Attack Theatre's real concurrent-request counting, the attenuation-expiry edge case, and (`dashboard-xss-regression.test.ts`) that every value the dashboard renders from a server response is escaped, never injected as raw HTML |
@@ -88,6 +90,7 @@ npm run test:verifier:
   the standard run never touches Stripe's real network.
 - **No penetration testing or external security audit.** The test suite is unit/
   integration coverage of the code as written, not an adversarial red-team exercise.
+- **No real-browser verification of the Evidence paging/filter UI in this pass** (the browser extension was unavailable); it is covered only by the `node:vm` tests below.
 - **No browser-matrix UI testing in the automated suite.** The dashboard tests run
   `app.js` in a `node:vm` sandbox (fast, deterministic, no real browser), which proves
   its logic but not real-browser rendering — see [DEMO.md](DEMO.md) for the manual

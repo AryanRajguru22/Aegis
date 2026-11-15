@@ -49,7 +49,7 @@ let state = {
   // | "tampered" | "error" (the check itself failed — auth, network, etc. — this is
   // NEVER the same state as "tampered": not knowing is not the same claim as knowing
   // it's broken). See verifyProductionLedger()'s own doc comment for the full contract.
-  prodLedger: { status: "checking", entries: [], brokenAtSeq: null, reason: null, errorMessage: null },
+  prodLedger: { status: "checking", entries: [], total: 0, publicKey: null, brokenAtSeq: null, reason: null, errorMessage: null },
 };
 
 // ---------- Block 4A: one-time "moment of truth" success pulse ----------
@@ -1611,16 +1611,28 @@ async function verifyProductionLedger() {
   state.prodLedger = { ...state.prodLedger, status: "checking" };
   renderProductionLedgerStatus();
   try {
-    const res = await principalApi("/ledger");
+    // Bounded fetch: the newest LEDGER_FETCH_LIMIT entries. chainValid still covers the
+    // WHOLE chain server-side, and res.page.total reports the true size.
+    const res = await principalApi(`/ledger?limit=${LEDGER_FETCH_LIMIT}`);
     state.prodLedger = {
       status: res.chainValid ? "verified" : "tampered",
       entries: res.entries,
+      total: res.page && typeof res.page.total === "number" ? res.page.total : res.entries.length,
+      publicKey: typeof res.ledgerPublicKey === "string" ? res.ledgerPublicKey : null,
       brokenAtSeq: res.chainValid ? null : res.brokenAtSeq ?? null,
       reason: res.chainValid ? null : res.reason ?? null,
       errorMessage: null,
     };
   } catch (err) {
-    state.prodLedger = { status: "error", entries: state.prodLedger.entries, brokenAtSeq: null, reason: null, errorMessage: describeLedgerError(err) };
+    state.prodLedger = {
+      status: "error",
+      entries: state.prodLedger.entries,
+      total: state.prodLedger.total,
+      publicKey: state.prodLedger.publicKey,
+      brokenAtSeq: null,
+      reason: null,
+      errorMessage: describeLedgerError(err),
+    };
   }
   renderProductionLedgerStatus();
   return state.prodLedger;
@@ -1634,6 +1646,7 @@ async function verifyProductionLedger() {
  */
 function renderProductionLedgerStatus() {
   const { status, entries, brokenAtSeq, reason, errorMessage } = state.prodLedger;
+  const total = typeof state.prodLedger.total === "number" ? state.prodLedger.total : entries.length;
 
   // Header chip.
   const chip = document.getElementById("shellStatus");
@@ -1642,7 +1655,7 @@ function renderProductionLedgerStatus() {
     chip.className = `shellStatus ${status}`;
     chipText.textContent =
       status === "checking" ? "Checking…" :
-      status === "verified" ? `Ledger verified · ${entries.length}` :
+      status === "verified" ? `Ledger verified · ${total}` :
       status === "tampered" ? "Ledger integrity violation" :
       "Ledger status unknown";
   }
@@ -1660,7 +1673,7 @@ function renderProductionLedgerStatus() {
     chainStatusEl.className = status === "verified" ? "valid" : status === "tampered" ? "invalid" : "checking";
     chainStatusEl.textContent =
       status === "checking" ? "Checking…" :
-      status === "verified" ? `✓ Verified — ${entries.length} entries, hash-chain intact` :
+      status === "verified" ? `✓ Verified — ${total} entries, hash-chain intact` :
       status === "tampered" ? `✗ TAMPERED — hash-chain verification failed${brokenAtSeq != null ? ` at entry #${brokenAtSeq}` : ""}` :
       errorMessage;
   }
@@ -1691,20 +1704,96 @@ function renderProductionLedgerStatus() {
   }
 
   // Evidence workspace — entries list, from the SAME fetch this status came from.
+  if (status === "verified" || status === "tampered") renderEvidenceList();
+  renderVerifierCommands();
+}
+
+// ---------- Evidence workspace — paging, filtering, detail ----------
+// Pure presentation over state.prodLedger.entries (never a second fetch). Newest first,
+// EVIDENCE_PAGE_SIZE at a time, optionally filtered to one event type; each entry can be
+// expanded to its full recorded data, so density is handled without hiding any evidence.
+const LEDGER_FETCH_LIMIT = 500;
+const EVIDENCE_PAGE_SIZE = 50;
+const evidenceView = { kind: "", shown: EVIDENCE_PAGE_SIZE, expanded: {} };
+
+function renderEvidenceList() {
   const listEl = document.getElementById("ledgerEntries");
-  if (listEl && (status === "verified" || status === "tampered")) {
-    listEl.innerHTML = "";
-    for (const entry of entries.slice().reverse()) {
-      const row = el("div", { class: "card" });
-      row.appendChild(
-        el("div", { class: "top" }, [el("span", { class: "kind", text: `#${entry.seq} ${entry.kind}` }), el("span", { class: "time", text: fmtTime(entry.createdAt) })])
-      );
-      row.appendChild(el("div", { class: "hash", text: `hash ${truncHash(entry.contentHash)} ← prev ${truncHash(entry.prevHash)}` }));
-      if (entry.signature) row.appendChild(el("div", { class: "hash", text: `sig ${truncHash(entry.signature)}` }));
-      listEl.appendChild(row);
+  if (!listEl) return;
+  const entries = state.prodLedger.entries;
+  const total = typeof state.prodLedger.total === "number" ? state.prodLedger.total : entries.length;
+
+  // Filter options come from the kinds actually present, with counts.
+  const counts = {};
+  for (const e of entries) counts[e.kind] = (counts[e.kind] || 0) + 1;
+  if (evidenceView.kind && !counts[evidenceView.kind]) evidenceView.kind = "";
+  const select = document.getElementById("ledgerKindFilter");
+  if (select) {
+    select.innerHTML = "";
+    select.appendChild(el("option", { value: "", text: `All event types (${entries.length})` }));
+    for (const kind of Object.keys(counts).sort()) {
+      select.appendChild(el("option", { value: kind, text: `${kind} (${counts[kind]})` }));
     }
+    select.value = evidenceView.kind;
+  }
+
+  const matching = entries.filter((e) => !evidenceView.kind || e.kind === evidenceView.kind).reverse();
+  const visible = matching.slice(0, evidenceView.shown);
+
+  const countEl = document.getElementById("ledgerCount");
+  if (countEl) {
+    const partial = total > entries.length ? ` Loaded the newest ${entries.length} of ${total} total entries; integrity covers all ${total}.` : "";
+    countEl.textContent = `Showing ${visible.length} of ${matching.length}${evidenceView.kind ? ` "${evidenceView.kind}"` : ""} entries, newest first.${partial}`;
+  }
+  const moreBtn = document.getElementById("ledgerMoreBtn");
+  if (moreBtn) moreBtn.style.display = matching.length > visible.length ? "" : "none";
+
+  listEl.innerHTML = "";
+  for (const entry of visible) {
+    const row = el("div", { class: "card" });
+    row.appendChild(
+      el("div", { class: "top" }, [el("span", { class: "kind", text: `#${entry.seq} ${entry.kind}` }), el("span", { class: "time", text: fmtTime(entry.createdAt) })])
+    );
+    row.appendChild(el("div", { class: "hash", text: `hash ${truncHash(entry.contentHash)} ← prev ${truncHash(entry.prevHash)}` }));
+    if (entry.signature) row.appendChild(el("div", { class: "hash", text: `sig ${truncHash(entry.signature)}` }));
+
+    const detail = el("pre", { class: "entryDetails" });
+    const open = evidenceView.expanded[entry.seq] === true;
+    detail.style.display = open ? "" : "none";
+    if (open) detail.textContent = JSON.stringify(entry.data, null, 2);
+    const btn = el("button", { class: "entryDetailsBtn", type: "button", text: open ? "Hide recorded data" : "Show recorded data" });
+    btn.addEventListener("click", () => {
+      const nowOpen = evidenceView.expanded[entry.seq] !== true;
+      evidenceView.expanded[entry.seq] = nowOpen;
+      detail.style.display = nowOpen ? "" : "none";
+      if (nowOpen) detail.textContent = JSON.stringify(entry.data, null, 2);
+      btn.textContent = nowOpen ? "Hide recorded data" : "Show recorded data";
+    });
+    row.appendChild(btn);
+    row.appendChild(detail);
+    listEl.appendChild(row);
   }
 }
+
+function renderVerifierCommands() {
+  const cmdEl = document.getElementById("verifierCommands");
+  if (!cmdEl) return;
+  const key = state.prodLedger.publicKey;
+  cmdEl.textContent = key
+    ? "npm run build:verifier\n" +
+      `node verifier/dist/export/exportLedger.js <path-to-aegis.db> ${key} ledger-export.json\n` +
+      "node verifier/dist/cli.js ledger-export.json"
+    : "Sign in and load the ledger to see the commands.";
+}
+
+document.getElementById("ledgerKindFilter").addEventListener("change", () => {
+  evidenceView.kind = document.getElementById("ledgerKindFilter").value || "";
+  evidenceView.shown = EVIDENCE_PAGE_SIZE;
+  renderEvidenceList();
+});
+document.getElementById("ledgerMoreBtn").addEventListener("click", () => {
+  evidenceView.shown += EVIDENCE_PAGE_SIZE;
+  renderEvidenceList();
+});
 
 // ---------- workspaces (Block 6) ----------
 // A persistent shell around six named workspaces. Every workspace reuses the exact

@@ -501,7 +501,14 @@
   .error { color: var(--deny); font-size: 12px; margin-top: 8px; }
   .hint { font-size: 12px; color: var(--text-dim); margin-top: 6px; line-height: 1.5; }
   a.link { color: var(--accent); cursor: pointer; }
-  #ledgerEntries { max-height: 260px; overflow-y: auto; margin-top: 8px; }
+  #ledgerEntries { max-height: 420px; overflow-y: auto; margin-top: 8px; }
+  .ledgerControls { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .ledgerControls select { max-width: 220px; }
+  #ledgerCount { margin: 6px 0 0; }
+  #ledgerMoreBtn { margin-top: 8px; }
+  .entryDetailsBtn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 11px; padding: 2px 0; text-decoration: underline; }
+  .entryDetails { margin: 6px 0 0; padding: 8px; max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 11px; color: var(--text-dim); background: var(--accent-dim); border-radius: 4px; }
+  .verifierCommands { white-space: pre-wrap; user-select: all; margin: 6px 0 0; padding: 8px; background: var(--accent-dim); border-radius: 4px; }
 
   #missionList { display: flex; flex-direction: column; gap: 0; max-height: 380px; overflow-y: auto; margin-bottom: 16px; }
   .missionCard {
@@ -1163,7 +1170,13 @@
           <div class="chainRole">Live ledger</div>
           <div id="chainStatus" class="checking">Checking…</div>
           <button id="refreshLedgerBtn" class="secondary">Refresh</button>
+          <div class="ledgerControls">
+            <label class="hint" for="ledgerKindFilter">Event type</label>
+            <select id="ledgerKindFilter" aria-label="Filter ledger entries by event type"><option value="">All event types</option></select>
+          </div>
+          <div id="ledgerCount" class="hint" aria-live="polite"></div>
           <div id="ledgerEntries"></div>
+          <button id="ledgerMoreBtn" class="secondary" type="button" style="display:none">Show older entries</button>
         </div>
         <div class="chainArrow">↓</div>
         <div class="evidenceStage">
@@ -1179,6 +1192,8 @@
         <div class="evidenceStage">
           <div class="chainRole">Independent verifier</div>
           <div class="hint">A separate, offline tool re-derives every proof independently.<span class="infoControl"><button class="infoBtn" type="button" aria-expanded="false" aria-label="More about the independent verifier">ⓘ</button><span class="infoPopover" role="tooltip">Trusting no Aegis code, this dashboard, or this server — it re-derives every entry's hash and signature from an exported copy of this ledger, and independently reconstructs each mission's budget accounting from that same export. See verifier/README.md.</span></span></div>
+          <div class="hint" style="margin-top:8px">The export covers the whole global chain, so an operator runs it against the database file — this dashboard cannot run it for you, by design. Run these on the machine hosting Aegis:</div>
+          <pre id="verifierCommands" class="hash verifierCommands">Sign in and load the ledger to see the commands.</pre>
         </div>
       </div>
     </section>

@@ -145,6 +145,19 @@ independent verifier both already prove they catch. It cannot repair, restore, o
 selectively fix an entry; the lab's own **reset** is the only way its state changes,
 and reset discards the whole instance rather than editing it in place.
 
+**Verification cost and the memo.** `verifyChain()` is a full O(entries) pass with an
+Ed25519 verify per entry (measured ~160µs/entry: ~3.2s at 20,000 entries) and runs
+synchronously, so it blocks the event loop — including in-flight payments. Its result is
+memoized against a whole-database change token (`PRAGMA data_version` + `total_changes()`),
+so repeated reads of an *unchanged* database are free while **any** write — in-process or
+from another connection/process — forces a fresh full pass. The memo cannot hide
+tampering performed through SQLite (tests cover in-process UPDATE/DELETE and an
+out-of-band write from a second connection). It does not protect against someone editing
+the database file's bytes behind a running process's back, nor does it reduce the cost
+while the ledger is being written to continuously: under constant write load every
+`/ledger` call still pays a full pass. Incremental/checkpointed verification would be the
+next step and is not implemented.
+
 This is honestly described as **tamper-evident**, not "blockchain" and not
 "trustless" — there is a single ledger signing key held by the running process
 (`AEGIS_LEDGER_PRIVATE_KEY_HEX`), not distributed consensus. The property proven is

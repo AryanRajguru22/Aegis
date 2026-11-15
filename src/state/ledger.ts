@@ -92,7 +92,17 @@ function rowToEntry(row: Record<string, unknown>): LedgerEntry {
  * strategy around this read-then-write — noted as a production concern, not solved
  * here.
  */
-export function createLedgerStore(db: DatabaseSync, keys: LedgerKeyMaterial, publicKeyHex: string): LedgerStore {
+export interface LedgerStoreOptions {
+  /** Test hook: called each time verifyChain() performs a real full pass (i.e. is not served from the unchanged-database memo). */
+  onFullVerification?: () => void;
+}
+
+export function createLedgerStore(
+  db: DatabaseSync,
+  keys: LedgerKeyMaterial,
+  publicKeyHex: string,
+  options: LedgerStoreOptions = {}
+): LedgerStore {
   const insertStmt = db.prepare(`
     INSERT INTO ledger_entries (kind, agent_id, principal_id, data_json, created_at, prev_hash, content_hash, signature)
     VALUES (:kind, :agent_id, :principal_id, :data_json, :created_at, :prev_hash, :content_hash, :signature)
@@ -125,7 +135,33 @@ export function createLedgerStore(db: DatabaseSync, keys: LedgerKeyMaterial, pub
     return { ...input, seq: Number(result.lastInsertRowid), createdAt, prevHash, contentHash, signature };
   }
 
+  // Full verification is O(entries) with an Ed25519 verify each (~160us/entry, measured —
+  // seconds at tens of thousands of entries) and runs synchronously, blocking every other
+  // request. Its RESULT is memoized, but only against a token that changes on ANY write to
+  // the database by ANY connection: SQLite's data_version covers other connections/processes,
+  // total_changes() covers this one. So a tampered row (an UPDATE/DELETE/INSERT, in-process
+  // or out-of-band) always invalidates the memo and forces a fresh full pass — this never
+  // trades detection for speed; it only skips re-proving a database that provably has not
+  // changed since it was last proven.
+  const dataVersionStmt = db.prepare(`PRAGMA data_version`);
+  const totalChangesStmt = db.prepare(`SELECT total_changes() AS n`);
+  let memo: { token: string; result: ChainVerification } | undefined;
+  function changeToken(): string {
+    const v = (dataVersionStmt.get() as { data_version: number }).data_version;
+    const n = (totalChangesStmt.get() as { n: number }).n;
+    return `${v}:${n}`;
+  }
+
   function verifyChain(): ChainVerification {
+    const token = changeToken();
+    if (memo && memo.token === token) return { ...memo.result };
+    const result = verifyChainFull();
+    memo = { token, result };
+    return { ...result };
+  }
+
+  function verifyChainFull(): ChainVerification {
+    options.onFullVerification?.();
     const rows = allStmt.all() as Array<Record<string, unknown>>;
     let expectedPrevHash = GENESIS_HASH;
     for (const row of rows) {
