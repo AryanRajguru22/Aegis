@@ -8,6 +8,7 @@ import type { RailRegistry } from "../rails/types.js";
 import type { NotifyingLedgerStore } from "./notifyingLedger.js";
 import type { IdempotencyCache } from "./idempotency.js";
 import type { MissionStore } from "../state/missions.js";
+import type { EscalationStore } from "../state/escalations.js";
 import type { MissionReservationStore } from "../mission/reservation.js";
 import type { SimulationCache } from "../decision/simulationCache.js";
 
@@ -25,6 +26,8 @@ export interface AppDependencies {
   /** Must be constructed AFTER `idempotency` for the same underlying db — see src/mission/reservation.ts's ordering requirement on createSqliteMissionReservationStore. */
   missions: MissionStore;
   reservations: MissionReservationStore;
+  /** Transactions the risk stage escalated, awaiting an operator's approve/reject (see routes/escalations.ts). */
+  escalations: EscalationStore;
   /**
    * Backs the Simulate → Execute intent-judgment reuse path (see
    * src/decision/simulationCache.ts). Optional so existing test harnesses that never

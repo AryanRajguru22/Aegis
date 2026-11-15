@@ -9,6 +9,7 @@ import { createLedgerStore, createSqliteRevocationStore, generateLedgerKeyPair, 
 import { wrapWithNotifications } from "./notifyingLedger.js";
 import { createSqliteIdempotencyCache } from "./idempotency.js";
 import { createSqliteMissionReservationStore } from "../mission/reservation.js";
+import { createEscalationStore } from "../state/escalations.js";
 import { createInMemorySimulationCache } from "../decision/simulationCache.js";
 import { createDemoIntentJudge } from "./demoMode.js";
 import { createDemoTamperRouter } from "./demoTamper.js";
@@ -108,6 +109,7 @@ export function createSecurityLab(railOpts: SecurityLabRailOptions): SecurityLab
     idempotency,
     missions,
     reservations,
+    escalations: createEscalationStore(db),
     simulationCache: createInMemorySimulationCache(),
     trustProxy: railOpts.trustProxy,
     accessLog: railOpts.accessLog,

@@ -20,6 +20,7 @@ import { createApp } from "../server.js";
 import { wrapWithNotifications } from "../notifyingLedger.js";
 import { createSqliteIdempotencyCache } from "../idempotency.js";
 import { createSqliteMissionReservationStore } from "../../mission/reservation.js";
+import { createEscalationStore } from "../../state/escalations.js";
 import { LEDGER_KIND_MISSION_POLICY_VERDICT } from "../../mission/index.js";
 import type { MissionRecordInput } from "../../state/missions.js";
 import { buildHarness, defaultCaveats, defaultTransaction, RecordingRailAdapter, alwaysConsistentJudge } from "./harness.js";
@@ -298,6 +299,7 @@ describe("F1 — persistence and legacy agents (the flag is derived from the mis
       idempotency,
       missions,
       reservations,
+      escalations: createEscalationStore(db),
       judgeTimeoutMs: 500,
     });
     return { app, db, rail, missions };

@@ -127,6 +127,38 @@ export function openDatabase(path: string = ":memory:"): DatabaseSync {
       amount_minor_units INTEGER NOT NULL,
       created_at TEXT NOT NULL
     );
+
+    -- Backs src/state/escalations.ts's EscalationStore: a transaction the risk stage
+    -- escalated, parked for an operator (the owning principal) to approve or reject.
+    -- origin_key is the idempotency scoped_key of the request that produced it, so one
+    -- request can only ever open one escalation. status moves pending -> approved|rejected
+    -- exactly once (a conditional UPDATE ... WHERE status = 'pending' — whoever changes a
+    -- row wins). outcome is NULL until an approved escalation's execution finishes; a row
+    -- left approved with a NULL outcome after a crash is marked 'indeterminate' at startup
+    -- and is NEVER re-executed (we cannot know whether the rail was reached).
+    CREATE TABLE IF NOT EXISTS escalations (
+      escalation_id TEXT PRIMARY KEY,
+      origin_key TEXT NOT NULL UNIQUE,
+      agent_id TEXT NOT NULL,
+      principal_id TEXT NOT NULL,
+      mission_id TEXT,
+      counterparty TEXT NOT NULL,
+      delegated_goal TEXT NOT NULL,
+      transaction_json TEXT NOT NULL,
+      escalation_reason TEXT NOT NULL,
+      risk_json TEXT,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      resolved_by TEXT,
+      resolved_at TEXT,
+      resolution_reason TEXT,
+      outcome TEXT,
+      outcome_json TEXT,
+      outcome_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_escalations_principal ON escalations(principal_id, status);
+    CREATE INDEX IF NOT EXISTS idx_escalations_agent ON escalations(agent_id);
   `);
   return db;
 }

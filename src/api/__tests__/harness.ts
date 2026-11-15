@@ -11,6 +11,7 @@ import { createApp } from "../server.js";
 import { wrapWithNotifications } from "../notifyingLedger.js";
 import { createInMemoryIdempotencyCache } from "../idempotency.js";
 import { createSqliteMissionReservationStore } from "../../mission/reservation.js";
+import { createEscalationStore } from "../../state/escalations.js";
 import { createInMemorySimulationCache } from "../../decision/simulationCache.js";
 import type { AppDependencies } from "../deps.js";
 
@@ -72,6 +73,7 @@ export function buildHarness(overrides: Partial<AppDependencies> = {}) {
     idempotency,
     missions,
     reservations,
+    escalations: createEscalationStore(db),
     simulationCache: createInMemorySimulationCache(),
     judgeTimeoutMs: 500,
     ...overrides,

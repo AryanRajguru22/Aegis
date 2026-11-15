@@ -19,3 +19,5 @@ export type { MissionStore, MissionRecord, MissionRecordInput, MissionStatus } f
 export { createPrincipalStore } from "./principals.js";
 export type { PrincipalStore } from "./principals.js";
 export { createSqliteRevocationStore } from "./revocations.js";
+export { createEscalationStore, escalationExecutionKey } from "./escalations.js";
+export type { EscalationStore, EscalationRecord, EscalationStatus, EscalationOutcome, EscalationOpenInput } from "./escalations.js";

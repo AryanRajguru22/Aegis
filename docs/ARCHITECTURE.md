@@ -76,7 +76,10 @@ dashboard XSS/regression tests, which assert on the exact shapes those modules r
 | `GET` | `/missions`, `/agents/:agentId/missions`, `/missions/:id` | read missions |
 | `POST` | `/missions/:id/cancel` | cancel a mission |
 | `POST` | `/simulate` | dry-run a transaction through the full decision pipeline, no execution |
-| `POST` | `/transactions` | submit a transaction for real evaluation + (if allowed) execution |
+| `POST` | `/transactions` | submit a transaction for real evaluation + (if allowed) execution. An `escalate` verdict also returns an `escalation` handle (see below) |
+| `GET` | `/escalations`, `/escalations/:id` | the principal's escalated transactions (`?status=pending\|approved\|rejected`) with the evidence behind each |
+| `POST` | `/escalations/:id/approve`, `/escalations/:id/reject` | operator decision; body `{ "reason": "…" }` (required). Principal API key only |
+| `GET` | `/transactions/escalations/:id` | the escalated **agent** (capability token) polls its own escalation's status/outcome |
 | `GET` | `/ledger` | the principal's slice of the hash-chained ledger. Optional `agentId`, `kind`, `limit` (1–1000, newest N), `beforeSeq` (cursor); `chainValid` always covers the WHOLE chain. Also returns the public `ledgerPublicKey` |
 | `GET` | `/healthz`, `/readyz` | liveness (no dependencies) / readiness (database answers) |
 | `GET` | `/stream` | Server-Sent Events stream of live decisions, feeding the dashboard's live feed |
@@ -113,7 +116,10 @@ ever runs:
      agent's own historical mean, once it has at least 3 prior transactions). Either
      one alone is enough to force `escalate`, regardless of what the intent judge said.
 4. **Composite verdict** — `allow`, `deny`, or `escalate`. An `escalate` verdict is
-   returned to the caller; nothing executes.
+   returned to the caller and nothing executes — but it is not a dead end: a real
+   `/transactions` request (never `/simulate`) parks it as a **pending escalation** that
+   the owning principal can approve or reject (`src/api/routes/escalations.ts`; design
+   and guarantees in [SECURITY_MODEL.md §4a](SECURITY_MODEL.md)).
 5. **Execution** (allow only) — `src/execution` calls the registered rail adapter
    (`src/rails/mockX402` in demo mode; `src/rails/stripeTestRail.ts` outside it, never
    both at once — see [SECURITY_MODEL.md](SECURITY_MODEL.md)).

@@ -24,6 +24,7 @@ import { errorHandler } from "./errors.js";
 import { wrapWithNotifications } from "./notifyingLedger.js";
 import { createSqliteIdempotencyCache } from "./idempotency.js";
 import { createSqliteMissionReservationStore } from "../mission/reservation.js";
+import { createEscalationStore } from "../state/escalations.js";
 import { createInMemorySimulationCache } from "../decision/simulationCache.js";
 import {
   isDemoModeEnabled,
@@ -289,6 +290,7 @@ async function main(): Promise<void> {
     idempotency,
     missions,
     reservations,
+    escalations: createEscalationStore(db),
     simulationCache: createInMemorySimulationCache(),
     demoMode,
     trustProxy,

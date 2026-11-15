@@ -80,6 +80,70 @@ is removed).
 real network request to a rail such as Stripe is outstanding) cannot recall that request.
 The window is now only the rail's own latency, not the judge's.
 
+## 4a. Escalation resolution (operator review)
+
+An `escalate` verdict can only come from the risk stage (the capability/policy stage
+only ever denies), so an escalation always means "policy allowed it, but the intent judge
+or the behavioral baseline was not satisfied". A real `POST /transactions` that
+escalates is parked as a row in the `escalations` table and a `escalation_opened`
+ledger entry; the response carries `escalation: { escalationId, status: "pending" }`.
+`/simulate` never opens one. One request opens at most one escalation (the originating
+idempotency key is unique), so a retry replays the same handle.
+
+**Who may resolve.** Only the principal that owns the agent, authenticated by its API key
+(`POST /escalations/:id/approve|reject`, `requirePrincipalAuth`). The agent's own
+capability token is a different credential class and is rejected on these routes with 401 —
+**an agent cannot approve its own escalation** (tested with the agent's real token).
+Another principal gets the same 404 as for a missing id. A reason (1–500 chars) is required
+and is recorded with the operator's principal id and a timestamp in an `escalation_resolved`
+ledger entry.
+
+**Approval is not a bypass.** The operator's decision replaces *only* the risk stage.
+Everything else is re-run, synchronously and in order, with no `await` before the rail:
+1. the agent's stored capability token is re-verified (revocation of the agent or any
+   ancestor, expiry, every caveat);
+2. the mission must still be active and unexpired (or, for a mission-less escalation, the
+   agent must still not be mission-bound);
+3. the budget is reserved **at approval time** with the same atomic conditional `UPDATE`
+   used for ordinary transactions. Nothing is held while an escalation is pending, so two
+   escalations that each fit a budget but not together cannot both be approved — the second
+   is refused with 409 and stays pending;
+4. `executeApprovedEscalation` (next to `executeTransaction`, the only module that calls a
+   rail) runs the capability + mission guard check again immediately before the rail call; a
+   change is ledgered as a `pre_execution_recheck` entry (`originalVerdict: "escalate"`) and
+   the rail is not called.
+
+If steps 1–3 fail at approval time the response is 409, the escalation **stays pending**, and
+the operator can still reject it. A rejected escalation never reaches a rail, and a retry of
+the original request replays the cached `escalate` (same Idempotency-Key) or re-evaluates
+from scratch (new key) — it can never execute the rejected transaction.
+
+**Exactly one decision.** Pending → approved/rejected is a single conditional
+`UPDATE … WHERE status = 'pending'`; of any number of duplicate or conflicting resolutions one
+wins. Repeating the *same* decision by the same principal is an idempotent 200
+(`replayed: true`, never re-executed); the opposite decision is 409.
+
+**Crash safety.** The rail is called with a key derived from the escalation
+(`escalation:<id>`). An approved escalation whose outcome was never recorded (process died)
+is marked `indeterminate` at startup, is **never re-executed**, and its budget reservation
+stays held (fail closed; same stance as an orphaned idempotency key). A reservation taken for
+an escalation that was still pending is returned at startup.
+
+**Separation of duties — what is and is not enforced.**
+- *Enforced:* the escalated agent (and any holder of only its capability token) cannot approve
+  or reject; only the owning principal's API key can; the deciding identity is recorded.
+- *Not enforced:* a human developer who submits transactions as an agent and the human
+  operator who reviews them are separate people only by convention. The identity model has one
+  human credential per principal (the API key) and the same principal owns the agent, so
+  "the developer cannot approve their own agent's transaction" **cannot be enforced** today,
+  and the ledger records `resolvedBy` as the principal id, not an individual. Minimal change
+  required: a reviewer role on principals (e.g. a `reviewers` table or a `role` column plus
+  a second API-key class) with the rule `reviewer ≠ agent owner / initiator`, enforced in
+  `requireOwnedEscalation`. Not built — it needs a decision about how reviewers are
+  provisioned.
+- Escalations do not expire on a timer; an operator who never decides leaves the transaction
+  unexecuted (fail closed).
+
 ## 5. Idempotency and crash safety
 
 Every transaction requires an idempotency key (`src/api/idempotency.ts`). A retried

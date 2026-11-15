@@ -24,6 +24,7 @@ let state = {
   activeAgentId: null,
   attenuateParentId: null, // null => next "Create" targets a root agent
   missions: [],
+  escalations: [], // the principal's escalated transactions (GET /escalations); pending ones await an operator decision
   viewingMissionId: null,
   viewingMission: null, // the full mission object last fetched by viewMissionDetail(), or null — read by renderAuthorityFlow() to extend the flow with the mission's budget, only when it belongs to the active agent.
   activeWorkspace: "Overview",
@@ -1149,6 +1150,11 @@ document.getElementById("executeBtn").addEventListener("click", async () => {
     const reach = decisionReachFraction(res);
     pulseAtmosphere(reach.kind);
     envSignalTo(reach.fraction, reach.kind);
+    if (res.escalation) {
+      // The pipeline escalated it: it has NOT executed. It is now waiting in the Operator review panel.
+      resultEl.appendChild(el("div", { class: "hint", text: `Sent to operator review (${res.escalation.escalationId}). Nothing has executed — approve or reject it in "Operator review" on this page.` }));
+      loadEscalations();
+    }
     if (missionId) await loadMissions(); // refresh budget/spent/reserved figures after a mission-scoped attempt — always reflects real server state, independent of #result staleness
     verifyProductionLedger(); // keeps the shell's status chip and the Evidence workspace honest after a real state change, not just after boot or an explicit Refresh click
   } catch (err) {
@@ -1156,6 +1162,128 @@ document.getElementById("executeBtn").addEventListener("click", async () => {
     renderError(resultEl, err.message);
   }
 });
+
+// ---------- operator review of escalated transactions ----------
+
+function escalationBadgeClass(status) {
+  if (status === "pending") return "escalate";
+  if (status === "approved") return "allow";
+  return "deny";
+}
+
+/** Plain-language account of how an APPROVED escalation ended — straight from the server's recorded outcome, never inferred here. */
+function describeEscalationOutcome(esc) {
+  if (esc.status === "rejected") return "Rejected — it was never sent to a payment rail.";
+  if (esc.status !== "approved") return "";
+  const detail = esc.outcomeDetail || {};
+  switch (esc.outcome) {
+    case "settled":
+      return `Approved and settled${detail.reference ? ` (reference ${detail.reference})` : ""}.`;
+    case "failed":
+      return `Approved, but the rail reported a failure${detail.error ? `: ${detail.error}` : ""}. Nothing was spent.`;
+    case "blocked":
+      return `Approved, but execution was withdrawn before any rail was called${detail.reason ? `: ${detail.reason}` : ""}.`;
+    case "error":
+      return "Approved, but an internal error stopped it before any rail was called. Nothing was spent.";
+    case "indeterminate":
+      return "Approved, but the server could not confirm whether the rail was reached. It was NOT retried — check the payment rail.";
+    default:
+      return "Approved — execution in progress…";
+  }
+}
+
+async function loadEscalations() {
+  const errorEl = document.getElementById("escalationError");
+  try {
+    const res = await principalApi("/escalations");
+    state.escalations = Array.isArray(res && res.escalations) ? res.escalations : []; // tolerate an unexpected body rather than throwing an unhandled rejection during boot
+    errorEl.textContent = "";
+  } catch (err) {
+    errorEl.textContent = `Could not load escalations: ${err.message}`;
+    return;
+  }
+  renderEscalationList();
+}
+
+function renderEscalationList() {
+  const container = document.getElementById("escalationList");
+  container.innerHTML = "";
+  const pending = state.escalations.filter((e) => e.status === "pending");
+  document.getElementById("escalationCount").textContent = pending.length > 0 ? `— ${pending.length} awaiting your decision` : "";
+  if (state.escalations.length === 0) {
+    container.appendChild(el("div", { class: "hint", text: "No escalations. A transaction appears here only when the risk stage escalates it." }));
+    return;
+  }
+  // Pending first, then the most recent resolved ones.
+  const ordered = [...pending, ...state.escalations.filter((e) => e.status !== "pending").slice(0, 10)];
+  for (const esc of ordered) container.appendChild(renderEscalationCard(esc));
+}
+
+function renderEscalationCard(esc) {
+  const tx = esc.transaction || {};
+  const card = el("div", { class: `escCard${esc.status === "pending" ? "" : " resolved"}` });
+  card.appendChild(
+    el("div", { class: "top" }, [el("span", { class: "id", text: esc.escalationId }), el("span", { class: `badge ${escalationBadgeClass(esc.status)}`, text: esc.status })])
+  );
+  card.appendChild(el("div", { class: "why", text: `${fmtMoney(tx.amountMinorUnits || 0, tx.currency || "")} · ${tx.category || "?"} · ${tx.rail || "?"} → ${esc.counterparty}` }));
+  card.appendChild(el("div", { class: "hint", text: `agent: ${esc.agentId} · mission: ${esc.missionId || "none"} · purpose: ${tx.purpose || ""}` }));
+  card.appendChild(el("div", { class: "hint", text: `Why it was escalated: ${esc.escalationReason}` }));
+  const judgment = esc.risk && esc.risk.intentJudgment;
+  if (judgment) {
+    card.appendChild(el("div", { class: "hint", text: `Intent judge (${judgment.provider || "unknown"}): ${judgment.verdict} — ${judgment.rationale}` }));
+  }
+  for (const flag of (esc.risk && esc.risk.baselineFlags) || []) {
+    card.appendChild(el("div", { class: "hint", text: `Behavioral flag: ${flag.detail}` }));
+  }
+
+  if (esc.status === "pending") {
+    const reasonInput = el("input", { placeholder: "Reason for your decision (required)", maxlength: "500" });
+    card.appendChild(reasonInput);
+    const actions = el("div", { class: "actions" });
+    const approveBtn = el("button", { text: "Approve & execute" });
+    const rejectBtn = el("button", { class: "danger", text: "Reject" });
+    approveBtn.addEventListener("click", () => resolveEscalation(esc, "approve", reasonInput.value));
+    rejectBtn.addEventListener("click", () => resolveEscalation(esc, "reject", reasonInput.value));
+    actions.appendChild(approveBtn);
+    actions.appendChild(rejectBtn);
+    card.appendChild(actions);
+  } else {
+    card.appendChild(
+      el("div", { class: "hint", text: `${esc.status === "approved" ? "Approved" : "Rejected"} by ${esc.resolvedBy} at ${new Date(esc.resolvedAt).toLocaleString()} — "${esc.resolutionReason}"` })
+    );
+    card.appendChild(el("div", { class: "hint", text: describeEscalationOutcome(esc) }));
+  }
+  return card;
+}
+
+async function resolveEscalation(esc, decision, reasonRaw) {
+  const errorEl = document.getElementById("escalationError");
+  errorEl.textContent = "";
+  const reason = (reasonRaw || "").trim();
+  if (!reason) {
+    errorEl.textContent = "Enter a reason for your decision first — it is recorded in the ledger.";
+    return;
+  }
+  const tx = esc.transaction || {};
+  const prompt =
+    decision === "approve"
+      ? `Approve and EXECUTE ${fmtMoney(tx.amountMinorUnits || 0, tx.currency || "")} to "${esc.counterparty}"? This moves money on the ${tx.rail} rail. Aegis re-checks the agent's authority and the mission budget first.`
+      : "Reject this transaction? It will never be executed.";
+  if (!confirm(prompt)) return;
+  let failure = "";
+  try {
+    await principalApi(`/escalations/${encodeURIComponent(esc.escalationId)}/${decision}`, { method: "POST", body: { reason } });
+  } catch (err) {
+    // A 409 here is the server refusing for a real reason (authority revoked, mission closed, budget exhausted, already decided) — shown verbatim.
+    failure = err.message;
+  }
+  await loadEscalations(); // always re-read the real state; it clears the message area, so the refusal is re-shown below
+  if (failure) errorEl.textContent = failure;
+  await loadMissions().catch(() => {});
+  verifyProductionLedger();
+}
+
+document.getElementById("refreshEscalationsBtn").addEventListener("click", loadEscalations);
 
 // ---------- missions ----------
 
@@ -2199,6 +2327,7 @@ function boot() {
   checkLabIntegrity(); // reflects a persisted lab tamper violation immediately, even before any lab action this session
   loadAgents();
   loadMissions();
+  loadEscalations();
   verifyProductionLedger();
   startStream();
   showWorkspace("overview");

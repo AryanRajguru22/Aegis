@@ -525,6 +525,17 @@
   .missionCard .actions { margin-top: 8px; display: flex; gap: 6px; }
   .missionCard .actions button { padding: 3px 8px; font-size: 11px; }
 
+  .escCard { border-left: 2px solid var(--escalate); border-bottom: 1px solid var(--border-soft); padding: 10px 0 10px 10px; font-size: 12px; }
+  .escCard:last-child { border-bottom: none; }
+  .escCard.resolved { border-left-color: var(--border); }
+  .escCard .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .escCard .id { font-family: var(--mono); font-weight: 600; }
+  .escCard .hint { margin: 2px 0; }
+  .escCard .why { color: var(--text); margin: 4px 0; }
+  .escCard input { width: 100%; margin: 6px 0 4px; }
+  .escCard .actions { display: flex; gap: 6px; }
+  .escCard .actions button { padding: 3px 10px; font-size: 11px; }
+
   .pipeline { display: flex; flex-direction: column; }
   .stage { border-left: 2px solid var(--border); border-bottom: 1px solid var(--border-soft); padding: 8px 0 8px 12px; }
   .stage:last-child { border-bottom: none; }
@@ -1056,6 +1067,13 @@
               <button id="simulateBtn" class="secondary">Simulate</button>
               <button id="executeBtn">Execute</button>
             </div>
+          </div>
+          <div class="section surface" id="escalationSection">
+            <h2>Operator review — escalations <span id="escalationCount" class="hint" style="text-transform:none"></span></h2>
+            <div class="hint">When the risk stage cannot clear a transaction it is parked here. Nothing executes until you approve it. Approving re-checks the agent's authority and the mission's budget at that moment; rejecting never reaches a payment rail. Both decisions are recorded in the ledger with your identity and reason.</div>
+            <div id="escalationList"></div>
+            <div id="escalationError" class="error"></div>
+            <div class="row" style="margin-top:8px"><button id="refreshEscalationsBtn" class="secondary">Refresh</button></div>
           </div>
         </div>
         <div class="wsMain">

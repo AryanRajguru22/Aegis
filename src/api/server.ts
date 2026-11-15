@@ -10,6 +10,7 @@ import { createPrincipalsRouter } from "./routes/principals.js";
 import { createAgentsRouter } from "./routes/agents.js";
 import { createMissionsRouter } from "./routes/missions.js";
 import { createTransactionsRouter } from "./routes/transactions.js";
+import { createEscalationsRouter } from "./routes/escalations.js";
 import { createLedgerRouter } from "./routes/ledger.js";
 import { createStreamRouter } from "./routes/stream.js";
 
@@ -80,6 +81,7 @@ export function createApp(deps: AppDependencies): Express {
   app.use(createAgentsRouter(deps, requirePrincipal));
   app.use(createMissionsRouter(deps, requirePrincipal));
   app.use(createTransactionsRouter(deps, requireAgent));
+  app.use(createEscalationsRouter(deps, requirePrincipal, requireAgent));
   app.use(createLedgerRouter(deps, requirePrincipal));
   app.use(createStreamRouter(deps, requirePrincipal));
 

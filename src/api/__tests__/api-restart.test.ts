@@ -20,6 +20,7 @@ import { createApp } from "../server.js";
 import { wrapWithNotifications } from "../notifyingLedger.js";
 import { createSqliteIdempotencyCache } from "../idempotency.js";
 import { createSqliteMissionReservationStore } from "../../mission/reservation.js";
+import { createEscalationStore } from "../../state/escalations.js";
 import type { AppDependencies } from "../deps.js";
 import { RecordingRailAdapter, alwaysConsistentJudge, defaultCaveats, defaultTransaction } from "./harness.js";
 
@@ -89,6 +90,7 @@ function buildAppInstance(dbPath: string, rootKeys: RootKeyMaterial, ledgerKeys:
     idempotency,
     missions,
     reservations,
+    escalations: createEscalationStore(db),
     judgeTimeoutMs: 500,
   };
 

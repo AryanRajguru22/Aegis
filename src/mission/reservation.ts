@@ -36,6 +36,9 @@ export interface MissionReservationStore {
   release(missionId: string, amountMinorUnits: number, scopedKey: string): void;
 }
 
+/** Scoped keys of reservations taken at operator approval time start with this (see src/state/escalations.ts escalationExecutionKey). */
+const ESCALATION_KEY_PREFIX = "escalation:";
+
 function assertValidAmount(amountMinorUnits: number, fnName: string): void {
   if (!Number.isInteger(amountMinorUnits) || amountMinorUnits <= 0) {
     throw new Error(`${fnName}(): amountMinorUnits must be a positive integer, got ${JSON.stringify(amountMinorUnits)}`);
@@ -91,7 +94,31 @@ export function reconcileMissionReservations(db: DatabaseSync): { resolved: numb
     const getIdempotencyStateStmt = db.prepare(`SELECT state FROM idempotency_records WHERE scoped_key = :scoped_key`);
     const deleteTicketStmt = db.prepare(`DELETE FROM mission_reservation_tickets WHERE scoped_key = :scoped_key`);
 
+    const getEscalationStmt = db.prepare(`SELECT status, outcome FROM escalations WHERE escalation_id = :id`);
+    const giveBackStmt = db.prepare(`UPDATE missions SET reserved_minor_units = reserved_minor_units - :amount WHERE mission_id = :mission_id AND reserved_minor_units >= :amount`);
+
     for (const ticket of tickets) {
+      if (ticket.scoped_key.startsWith(ESCALATION_KEY_PREFIX)) {
+        // A reservation made when an operator APPROVED an escalation (see
+        // src/api/routes/escalations.ts) is keyed "escalation:<id>" and has no
+        // idempotency row — its fate lives in the escalations table instead.
+        const esc = getEscalationStmt.get({ id: ticket.scoped_key.slice(ESCALATION_KEY_PREFIX.length) }) as { status: string; outcome: string | null } | undefined;
+        if (!esc) continue; // anomaly — fail closed, leave as-is
+        if (esc.status === "pending" || esc.status === "rejected") {
+          // Reserved but the approval never took effect: nothing was executed, so the capacity is simply returned.
+          giveBackStmt.run({ mission_id: ticket.mission_id, amount: ticket.amount_minor_units });
+          deleteTicketStmt.run({ scoped_key: ticket.scoped_key });
+          resolved++;
+        } else if (esc.outcome === null || esc.outcome === "indeterminate") {
+          // Approved, and the process died before the rail outcome was recorded: the rail may have been reached. Fail closed — stays reserved.
+          deleteTicketStmt.run({ scoped_key: ticket.scoped_key });
+          stuck++;
+        } else {
+          deleteTicketStmt.run({ scoped_key: ticket.scoped_key });
+          resolved++;
+        }
+        continue;
+      }
       const row = getIdempotencyStateStmt.get({ scoped_key: ticket.scoped_key }) as { state: string } | undefined;
       if (!row || row.state === "pending") continue; // structurally unreachable in practice; fail closed by leaving as-is
 

@@ -20,6 +20,7 @@ import { createApp } from "../server.js";
 import { wrapWithNotifications } from "../notifyingLedger.js";
 import { createSqliteIdempotencyCache } from "../idempotency.js";
 import { createSqliteMissionReservationStore } from "../../mission/reservation.js";
+import { createEscalationStore } from "../../state/escalations.js";
 import type { AppDependencies } from "../deps.js";
 import type { NotifyingLedgerStore } from "../notifyingLedger.js";
 import type { IdempotencyCache, IdempotencyRecord } from "../idempotency.js";
@@ -92,6 +93,7 @@ function buildAppInstance(dbPath: string, rootKeys: RootKeyMaterial, ledgerKeys:
     idempotency,
     missions,
     reservations,
+    escalations: createEscalationStore(db),
     idempotencyPollIntervalMs: 5,
     idempotencyWaitTimeoutMs: 2000,
   };
@@ -234,6 +236,7 @@ describe("execution failure never leaves a permanently stuck claim", () => {
       idempotency,
       missions,
       reservations,
+      escalations: createEscalationStore(db),
       idempotencyPollIntervalMs: 5,
       idempotencyWaitTimeoutMs: 2000,
     };

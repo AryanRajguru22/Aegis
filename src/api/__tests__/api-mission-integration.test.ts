@@ -20,6 +20,7 @@ import { createApp } from "../server.js";
 import { wrapWithNotifications } from "../notifyingLedger.js";
 import { createSqliteIdempotencyCache } from "../idempotency.js";
 import { createSqliteMissionReservationStore } from "../../mission/reservation.js";
+import { createEscalationStore } from "../../state/escalations.js";
 import { LEDGER_KIND_MISSION_TRANSACTION_LINK, LEDGER_KIND_MISSION_POLICY_VERDICT } from "../../mission/index.js";
 import type { AppDependencies } from "../deps.js";
 import type { MissionRecordInput } from "../../state/missions.js";
@@ -523,6 +524,7 @@ describe("mission integration — process restart during/after a reservation", (
       idempotency,
       missions,
       reservations,
+      escalations: createEscalationStore(db),
       idempotencyPollIntervalMs: 5,
       idempotencyWaitTimeoutMs: 2000,
     };

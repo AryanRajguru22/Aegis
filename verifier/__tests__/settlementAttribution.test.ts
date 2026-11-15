@@ -347,3 +347,55 @@ describe("settlement attribution — end to end through the real CLI", () => {
     assert.doesNotMatch(result.stdout, /HISTORICAL/);
   });
 });
+
+describe("settlement attribution — operator-approved escalations settle exactly like any other settlement", () => {
+  const P = "acme-corp";
+  const opened = (agentId: string, escalationId: string): RawEvent => ({ kind: "escalation_opened", agentId, principalId: P, data: { escalationId, reason: "ambiguous" } });
+  const resolved = (agentId: string, escalationId: string, decision: "approve" | "reject"): RawEvent => ({
+    kind: "escalation_resolved",
+    agentId,
+    principalId: P,
+    data: { escalationId, decision, resolvedBy: P, reason: "checked" },
+  });
+  /** Exactly what the API writes for an approved, mission-scoped escalation: execution_result (+ escalationId), pipeline outcome (source operator_approval), link. */
+  const approvedSettlement = (agentId: string, escalationId: string, reference: string, missionId: string, amount: number): RawEvent[] => {
+    const [exec, outcome, link] = ev.missionSettlement(agentId, reference, missionId, amount) as [RawEvent, RawEvent, RawEvent];
+    return [
+      opened(agentId, escalationId),
+      resolved(agentId, escalationId, "approve"),
+      { ...exec, data: { ...(exec.data as object), escalationId } },
+      { ...outcome, data: { ...(outcome.data as object), source: "operator_approval", escalationId } },
+      link,
+    ];
+  };
+
+  test("an approved, mission-scoped escalation's settlement is attributed to its mission with no ambiguity: the verifier needs no special case", () => {
+    const { report, att } = run([ev.agent("a1"), ev.missionCreated("a1", "m-1"), ...approvedSettlement("a1", "esc_1", "ref-1", "m-1", 3_800)]);
+    assert.equal(report.integrity.valid, true);
+    assert.equal(att.successfulSettlements, 1);
+    assert.equal(att.attributedToMission, 1);
+    assert.equal(att.ambiguous, 0);
+    assert.equal(att.bindingViolations.legacy + att.bindingViolations.postEpoch, 0);
+    assert.equal(att.missionLinksWithoutExecution, 0);
+    assert.equal(exitCodeForReport(report), 0);
+  });
+
+  test("an approved escalation for a mission-less agent that was never mission-bound is permitted token-only spending", () => {
+    const { att, report } = run([ev.agent("a1"), opened("a1", "esc_1"), resolved("a1", "esc_1", "approve"), ev.exec("a1", "ref-1")]);
+    assert.equal(att.permittedMissionless, 1);
+    assert.equal(att.ambiguous, 0);
+    assert.equal(exitCodeForReport(report), 0);
+  });
+
+  test("a rejected escalation (opened + resolved, no execution_result) adds no settlement and no finding", () => {
+    const { att, report } = run([ev.agent("a1"), ev.missionCreated("a1", "m-1"), opened("a1", "esc_1"), resolved("a1", "esc_1", "reject")]);
+    assert.equal(att.successfulSettlements, 0);
+    assert.equal(att.findings.length, 0);
+    assert.equal(exitCodeForReport(report), 0);
+  });
+
+  test("an approved settlement by a mission-bound agent that wrote NO mission attribution is still caught as a binding violation (approval is not a bypass)", () => {
+    const { att } = run([ev.agent("a1"), ev.missionCreated("a1", "m-1"), opened("a1", "esc_1"), resolved("a1", "esc_1", "approve"), ev.exec("a1", "ref-1")]);
+    assert.equal(att.bindingViolations.legacy + att.bindingViolations.postEpoch, 1);
+  });
+});

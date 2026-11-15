@@ -91,6 +91,15 @@ agent's historical average (5000), over the 3x threshold"* — the environment's
 signal, and the Decision Inspector showing the intent judge said `consistent` while
 the **behavioral** layer alone forced the escalation.
 
+**Then resolve it** *(new)*: the escalated transaction has **not** executed — it is waiting in
+the **Operator review — escalations** panel on the same page, with the evidence behind it.
+Enter a reason and **Reject** it (nothing ever reaches the rail), or **Approve & execute** it
+(Aegis re-checks the agent's authority and the budget first; revoke the agent before approving
+to watch the approval be refused). Either way the decision, your principal id and your reason
+appear in the Evidence ledger as `escalation_resolved`. The agent can poll
+`GET /transactions/escalations/:id` with its own token to learn the outcome — it cannot
+approve itself.
+
 **Key line:** "That escalation is real — it's a disclosed, deterministic
 behavioral-anomaly heuristic, not a scripted outcome and not AI judgment. See Part 10
 below for exactly what is and isn't AI here."

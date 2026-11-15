@@ -218,7 +218,7 @@ background and, once signed in, all six read and write the same real API:
 | **Overview** | The thesis at a glance — current authority, mission, budget, last decision, and ledger status, each linking straight to its own workspace |
 | **Authority** | Create a root agent, then select and **Attenuate** it to mint a narrower sub-agent — the live chain diagram (`Root → Delegated → Attenuated → Mission bound`) updates as you go |
 | **Missions** | Bind a bounded objective (goal + its own, narrower budget) to a selected agent; Mission Detail shows live remaining budget as transactions settle against it |
-| **Transactions** | Submit a transaction against the selected agent (optionally scoped to a mission) and watch the full pipeline resolve to `ALLOW`, `DENY`, or `ESCALATE`, stage by stage |
+| **Transactions** | Submit a transaction against the selected agent (optionally scoped to a mission) and watch the full pipeline resolve to `ALLOW`, `DENY`, or `ESCALATE`, stage by stage. An escalated transaction waits in the **Operator review** panel for you to approve (re-checked, then executed) or reject (never executed) with a recorded reason |
 | **Security** | Always available, in any server mode — the concurrent-budget-race, revocation, and ledger-tamper scenarios below, all running against the isolated Security Demonstration Lab (see below), never production data |
 | **Evidence** | The live, real production ledger — a one-click integrity check and the independent verifier's own instructions. Tampering only ever happens in the isolated Security Lab (Security workspace), never here |
 

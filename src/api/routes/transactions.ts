@@ -9,6 +9,7 @@ import type { ClaimOutcome, IdempotencyCache, IdempotencyRecord } from "../idemp
 import { checkMissionGate, computeMissionSpent, validateMissionAgainstToken, LEDGER_KIND_MISSION_POLICY_VERDICT, LEDGER_KIND_MISSION_TRANSACTION_LINK, LEDGER_KIND_MISSION_PIPELINE_OUTCOME } from "../../mission/index.js";
 import { parseCounterparty, parseOptionalCounterparty, parseOptionalMissionId, parseTransactionBody } from "../validation.js";
 import { computeSimulationFingerprint } from "../../decision/simulationCache.js";
+import { LEDGER_KIND_ESCALATION_OPENED } from "../../state/escalations.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 25;
 const DEFAULT_WAIT_TIMEOUT_MS = 15_000;
@@ -173,7 +174,7 @@ function missionNotFoundMessage(missionId: string): string {
  * the sticky mission-binding rule (a mission-less request in flight when the agent's
  * first mission is created — audit finding F5).
  */
-function recheckMissionBeforeRail(
+export function recheckMissionBeforeRail(
   deps: AppDependencies,
   agentId: string,
   missionId: string | undefined
@@ -562,6 +563,38 @@ export function createTransactionsRouter(deps: AppDependencies, requireAgent: Re
 
     // Execution genuinely completed at this point — allow/deny/escalate and
     // settled/failed executions are all real, final outcomes.
+
+    // An ESCALATE verdict is not a dead end: it parks the transaction for the owning
+    // principal (the operator) to approve or reject — see routes/escalations.ts. Only a
+    // real /transactions request opens one; /simulate never does. Opening is best-effort
+    // and fail-safe: if it cannot be recorded, nothing executes anyway (escalate never
+    // reaches a rail) and the response simply carries no escalation handle.
+    let escalation: { escalationId: string; status: "pending" } | undefined;
+    if (result.decision.verdict === "escalate") {
+      try {
+        const opened = deps.escalations.open({
+          originKey: scopedKey,
+          agentId: agent.agentId,
+          principalId: agent.principalId,
+          missionId: missionId ?? null,
+          counterparty,
+          delegatedGoal,
+          transaction: transaction as unknown as Record<string, unknown>,
+          escalationReason: result.decision.reason,
+          risk: result.decision.risk ?? null,
+        });
+        deps.ledger.append({
+          kind: LEDGER_KIND_ESCALATION_OPENED,
+          agentId: agent.agentId,
+          principalId: agent.principalId,
+          data: { escalationId: opened.escalationId, missionId: missionId ?? null, counterparty, reason: result.decision.reason, transaction },
+        });
+        escalation = { escalationId: opened.escalationId, status: "pending" };
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error("Failed to record an escalation for operator review (the transaction was NOT executed):", error);
+      }
+    }
     if (missionId !== undefined) {
       // Records the FULL outcome of this mission-scoped attempt — regardless of
       // verdict — so it is visible in the mission's own history view even when it
@@ -619,7 +652,7 @@ export function createTransactionsRouter(deps: AppDependencies, requireAgent: Re
       }
     }
 
-    const responseBody = { agentId: agent.agentId, ...result };
+    const responseBody = { agentId: agent.agentId, ...result, ...(escalation ? { escalation } : {}) };
     tryCompleteWithRetry(deps.idempotency, scopedKey, { requestHash, status: 200, body: responseBody });
     // Whether or not the cache write ultimately succeeded, this caller — the one that
     // actually triggered the real execution — gets the true, accurate result. Never

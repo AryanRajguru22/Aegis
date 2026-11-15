@@ -15,8 +15,9 @@ export const LEDGER_KIND_PRE_EXECUTION_RECHECK = "pre_execution_recheck";
  * transaction.rail, then write the settlement outcome to the ledger. `deny` and
  * `escalate` verdicts return with no `execution` field at all: no rail adapter is
  * invoked, and no execution_result entry is written, because nothing was attempted.
- * This function is the only place in the codebase that is allowed to call a rail
- * adapter's execute() — see the test suite's "money only moves after allow" cases.
+ * Rail adapters are only ever called from this module (callRailAndRecord below) — by
+ * this function after an "allow", or by executeApprovedEscalation after an operator
+ * approved an escalation. See the test suite's "money only moves after allow" cases.
  */
 export async function executeTransaction(
   input: ExecuteTransactionInput,
@@ -45,8 +46,64 @@ export async function executeTransaction(
     return { decision: { verdict: "deny", reason, policy: blocked.policy, risk: decision.risk } };
   }
 
-  const adapter = deps.rails.get(input.transaction.rail);
   const idempotencyKey = input.idempotencyKey ?? `${input.agentId}:${randomUUID()}`;
+  const execution = await callRailAndRecord(input, deps, idempotencyKey);
+
+  return { decision, execution };
+}
+
+export interface ApprovedEscalationInput extends ExecuteTransactionInput {
+  escalationId: string;
+  /** The principal who approved it — recorded on the withdrawal entry if authority changes at the last moment. */
+  approvedBy: string;
+}
+
+export type ApprovedEscalationResult =
+  | { blocked: true; reason: string; stage: "capability" | "guard" }
+  | { blocked: false; execution: RailExecutionResult };
+
+/**
+ * Executes a transaction the risk stage ESCALATED and an operator then APPROVED. It skips
+ * only the risk stage — the human decision replaces it. Everything else is re-run: the
+ * capability token is re-verified (revocation of the agent or any ancestor, expiry, every
+ * caveat) and the caller's synchronous `preExecutionGuard` (mission still active, ...)
+ * is consulted, with no await between those checks and the rail call. If either fails,
+ * NO rail is called and a pre_execution_recheck entry records the withdrawal.
+ *
+ * This lives next to executeTransaction on purpose: it is the second, and only other,
+ * caller of callRailAndRecord, so "money moves only inside this module, only after
+ * authorization" stays true by construction.
+ */
+export async function executeApprovedEscalation(input: ApprovedEscalationInput, deps: ExecuteDependencies): Promise<ApprovedEscalationResult> {
+  const blocked = recheckBeforeRail(input, deps, { allowed: true, revocationIdentifiers: [] });
+  if (blocked) {
+    const reason = `Authority changed after the operator's approval — execution withdrawn before any rail was called: ${blocked.reason}`;
+    deps.ledger.append({
+      kind: LEDGER_KIND_PRE_EXECUTION_RECHECK,
+      agentId: input.agentId,
+      principalId: input.principalId,
+      data: { allowed: false, reason, originalVerdict: "escalate", stage: blocked.stage, escalationId: input.escalationId, approvedBy: input.approvedBy, transaction: input.transaction },
+    });
+    return { blocked: true, reason, stage: blocked.stage };
+  }
+  const idempotencyKey = input.idempotencyKey ?? `escalation:${input.escalationId}`;
+  const execution = await callRailAndRecord(input, deps, idempotencyKey, { escalationId: input.escalationId });
+  return { blocked: false, execution };
+}
+
+/**
+ * The ONLY place in the codebase that calls a rail adapter's execute(). Both the normal
+ * path (an "allow" verdict) and the operator-approved path (an approved escalation) go
+ * through here, strictly after their own last-moment re-check. Always records the
+ * outcome in the ledger as an execution_result entry.
+ */
+async function callRailAndRecord(
+  input: ExecuteTransactionInput,
+  deps: ExecuteDependencies,
+  idempotencyKey: string,
+  extraLedgerData?: Record<string, unknown>
+): Promise<RailExecutionResult> {
+  const adapter = deps.rails.get(input.transaction.rail);
 
   let execution: RailExecutionResult;
   if (!adapter) {
@@ -91,10 +148,10 @@ export async function executeTransaction(
     kind: LEDGER_KIND_EXECUTION_RESULT,
     agentId: input.agentId,
     principalId: input.principalId,
-    data: { ...execution, idempotencyKey },
+    data: { ...execution, idempotencyKey, ...(extraLedgerData ?? {}) },
   });
 
-  return { decision, execution };
+  return execution;
 }
 
 /** Returns undefined when execution may proceed; otherwise why it must not. Fails closed on any exception. */
