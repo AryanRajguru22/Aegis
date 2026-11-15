@@ -175,9 +175,14 @@ newest first, in ~0.75 s).
     variables. The Dockerfile was reviewed statically: multi-stage, `USER node`, `/data` volume,
     exec-form `CMD` so SIGTERM reaches Node, `HEALTHCHECK` on `/healthz`; compose adds `read_only`,
     `cap_drop: ALL`, `no-new-privileges`.
-- **Not verified:** the image build, running as non-root at runtime, graceful shutdown/exit code
+- **Not verified by me locally:** the image build, running as non-root at runtime, graceful shutdown/exit code
   (the Windows `e2e` skips it; WSL Ubuntu has no Node), persistence across a container restart, tests
-  inside a container. No hosted deployment has occurred. No Stripe credentials were used.
+  inside a container.
+- **Independent evidence from CI (after the merge, §11):** the workflow's `docker` job — build the image on
+  Linux, refuse to start without signing keys, start with ephemeral keys, `/readyz` + `/healthz` + CSP
+  header, `docker stop` exit code 0 — passed on `f884e34`. That covers build, startup, health and graceful
+  stop; it does **not** cover persistence across restart, non-root inspection, or running the test suite in
+  the container. No hosted deployment has occurred. No Stripe credentials were used.
 
 ## 11. CI verification
 
@@ -186,8 +191,10 @@ verifier tests, audits) and a `docker` job (build; refuses to start without keys
 `/healthz`, CSP header → `docker stop` exit 0). It was **not executed or YAML-linted locally** (no YAML
 parser available offline). Locally I ran the `test` job's steps (lint, typecheck, build, tests,
 verifier tests, `npm audit`) and the e2e script. The workflow triggers on pushes to `main` and on pull
-requests, so the first real run happens after the merge; its result is reported in the hand-off
-message, not here.
+requests, so the first real run happened after the merge. **Result: run
+[43715624396](https://github.com/AryanRajguru22/Aegis/actions/runs/43715624396) on `f884e34` (main) —
+`test` job success and `docker` job success** (read from the public GitHub API after the run completed).
+The workflow's `e2e` is not a CI step; only the Windows e2e run above covers it.
 
 ## 12. Final test results
 
