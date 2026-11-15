@@ -3,8 +3,10 @@
 ## Commands
 
 ```bash
-npm test              # main Aegis suite — 668 tests
-npm run test:verifier # the independent verifier's own suite — 88 tests
+npm test              # main Aegis suite — 723 tests
+npm run test:verifier # the independent verifier's own suite — 92 tests
+npm run e2e           # production-mode boot, restart persistence, verifier on the live DB
+npm run loadtest      # load + concurrency invariants (see LOAD_TESTING.md); not part of `npm test`
 ```
 
 Both compile from TypeScript first (`npm run build` / `npm run build:verifier`), then
@@ -28,19 +30,22 @@ They are not part of the standard, credential-free run.
 
 ```
 npm test:
-  tests 668
-  suites 192
-  pass 668
+  tests 723
+  suites 208
+  pass 723
   fail 0
+  skipped 0
 
 npm run test:verifier:
-  tests 88
-  suites 13
-  pass 88
+  tests 92
+  suites 14
+  pass 92
   fail 0
 ```
 
-756 tests total, 0 failures, plus `npm run e2e` (production-mode boot, restart persistence, tampered-ledger detection by the independent verifier) passing, on the final run before this document was updated. One unrelated capability test (`extractRootFacts … recovers principalId and delegatedGoal`) failed once during a full-suite run and did not reproduce in six isolated runs or any later full run; it is not root-caused.
+815 tests total (723 + 92), 0 failures, 0 skipped, plus `npm run e2e` (production-mode boot, restart persistence, tampered-ledger detection by the independent verifier; its graceful-shutdown step is skipped on Windows), `npm run typecheck`, `npm run lint` and `npm audit` (0 vulnerabilities) all clean, and `npm run loadtest` (104 invariant checks) all holding — measured on Windows 11 / Node 24.13.1.
+
+**Formerly flaky test — root-caused and fixed.** `extractRootFacts … recovers principalId and delegatedGoal` failed intermittently under load with `{ RunLimit: 'Timeout' }`. Cause: `Authorizer.query()` (no limits argument) runs under the Biscuit engine's built-in ~1 ms run limit, unlike every authorization call here, which passes explicit 5 s limits; any CPU contention could exceed 1 ms. Reproduced on demand (8 parallel workers running the capability suite: 5 failures in 160 runs; 10 timeouts in 3,200 direct `extractRootFacts` calls); after routing the query through `queryWithLimits(AUTHORIZE_LIMITS)`: 0 failures in 400 suite runs and 0 in 3,200 calls. Regression coverage: `capability-query-limits.test.ts` pins that queries use the explicit limits (the timing failure itself is not deterministic, so the stress loop above is the evidence).
 
 ## What the suite is organized around
 
@@ -54,6 +59,9 @@ npm run test:verifier:
 | Execution | `src/execution/__tests__/execution-core.test.ts` | Rail-agnostic execution dispatch |
 | Pre-rail recheck | `src/api/__tests__/api-pre-rail-recheck.test.ts` | Holds the intent judge open on a test-controlled promise, then revokes the agent / cancels or expires the mission / creates the agent's first mission while the request is provably in flight; asserts the rail is never called, the reservation returns, and a `pre_execution_recheck` entry is ledgered. 6 of its 7 tests fail if the re-check is removed (verified) |
 | Ledger paging & memo | `src/api/__tests__/api-ledger-pagination.test.ts`, `src/state/__tests__/ledger-verification-memo.test.ts`, `src/api/__tests__/dashboard-evidence-paging.test.ts` | Cursor paging reassembles the full history without gaps; `chainValid` covers the whole chain not the page; the `verifyChain` memo never hides tampering (in-process UPDATE/DELETE and an out-of-band write from a separate connection are all detected); Evidence UI paging/filter/detail |
+| Escalation resolution | `src/api/__tests__/api-escalation-resolution.test.ts` (31), `dashboard-escalation-review.test.ts` (9), `verifier/__tests__/settlementAttribution.test.ts` (+4) | An escalation opens only from `/transactions` (never `/simulate`), holds no budget while pending; approve/reject by the owning principal only — the agent's own capability token, no credential and another principal are all refused; approval re-verifies the capability and mission and reserves budget at approval time (two escalations that fit separately but not together cannot both be approved, also under concurrency); revoked / revoked-ancestor / cancelled / expired / newly-mission-bound agents are refused with the escalation left pending; exactly one decision wins (duplicate = idempotent replay, conflicting = 409, concurrent approve+approve+reject); a rejected transaction never reaches the rail; an approval followed by a last-moment revocation is withdrawn inside `executeApprovedEscalation` and ledgered; crash recovery marks an approved-without-outcome escalation `indeterminate`, never re-executes it, and keeps its reservation. Mutation-checked: removing the capability re-verification, or the status check and the conditional `UPDATE`, makes tests fail |
+| Async ledger verification | `src/state/__tests__/ledger-verify-async.test.ts` (13) | `verifyChainAsync()` returns exactly `verifyChain()`'s verdict for a valid chain and for content/link/signature/deletion tampering (also deep in a later batch), really yields to the event loop, shares one pass between concurrent callers, and the memo never hides a later UPDATE or an out-of-band write from a second connection |
+| Capability query limits | `src/capability/__tests__/capability-query-limits.test.ts` | Authorizer queries always use the explicit run limits (root cause of the formerly flaky test) |
 | Rails | `src/rails/__tests__/mock-x402-rail.test.ts`, `stripe-rail.test.ts` | Both rail adapters' non-credentialed behavior (fixed price-catalog matching for mock_x402; request shaping for the Stripe adapter without ever calling the real network) |
 | API | `src/api/__tests__/api-*.test.ts` | End-to-end route behavior: auth, idempotency under real concurrency, restart/crash-recovery of in-flight claims, mission integration, rail integration |
 | Dashboard | `src/api/__tests__/dashboard-*.test.ts` | `public/app.js` loaded via `node:vm` and exercised directly — the Authority Flow rendering, the Attack Theatre's real concurrent-request counting, the attenuation-expiry edge case, and (`dashboard-xss-regression.test.ts`) that every value the dashboard renders from a server response is escaped, never injected as raw HTML |
@@ -79,8 +87,10 @@ npm run test:verifier:
 
 ## What these tests do NOT prove
 
-- **No load/scale testing.** The concurrency tests prove correctness under real
-  concurrent calls at test-scale (tens of requests), not production request volume.
+- **No production-scale or soak testing.** `npm test`'s concurrency tests prove correctness under
+  real concurrent calls at test scale (tens of requests). `npm run loadtest` extends that to a
+  few thousand requests per scenario at concurrency 1/10/50 on one developer machine
+  ([LOAD_TESTING.md](LOAD_TESTING.md)) — not production volume, not hours-long, not a real network.
 - **No real AI risk evaluation is exercised.** `anthropic-judge.live.test.ts` and
   `gemini-judge.live.test.ts` require a real `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`
   respectively and are both excluded from `npm test` — the standard run never calls a
@@ -90,7 +100,8 @@ npm run test:verifier:
   the standard run never touches Stripe's real network.
 - **No penetration testing or external security audit.** The test suite is unit/
   integration coverage of the code as written, not an adversarial red-team exercise.
-- **No real-browser verification of the Evidence paging/filter UI in this pass** (the browser extension was unavailable); it is covered only by the `node:vm` tests below.
+- **Real-browser verification was performed once, manually, not automated** (Chrome via the browser extension, against a demo-mode server with ~1,850 ledger entries): Evidence paging/filter/expand/verifier-command, error and empty states, a 500-entry refresh with no main-thread stall over 30 ms, no console errors, all six workspaces rendering, and the Operator review flow (reject, approve → settled, approval refused after revocation). It is not part of `npm test`, and only Chrome at one window size was used; the native `confirm()` dialogs were stubbed because they block browser automation.
+- **Docker and Linux graceful shutdown were not run in the final pass** (the Docker Desktop engine would not start). The production runtime layer (prod-only dependencies + compiled output) was started natively, and CI's `docker` job covers the image.
 - **No browser-matrix UI testing in the automated suite.** The dashboard tests run
   `app.js` in a `node:vm` sandbox (fast, deterministic, no real browser), which proves
   its logic but not real-browser rendering — see [DEMO.md](DEMO.md) for the manual

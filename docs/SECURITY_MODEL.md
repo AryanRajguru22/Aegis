@@ -209,18 +209,30 @@ independent verifier both already prove they catch. It cannot repair, restore, o
 selectively fix an entry; the lab's own **reset** is the only way its state changes,
 and reset discards the whole instance rather than editing it in place.
 
-**Verification cost and the memo.** `verifyChain()` is a full O(entries) pass with an
-Ed25519 verify per entry (measured ~160µs/entry: ~3.2s at 20,000 entries) and runs
-synchronously, so it blocks the event loop — including in-flight payments. Its result is
-memoized against a whole-database change token (`PRAGMA data_version` + `total_changes()`),
-so repeated reads of an *unchanged* database are free while **any** write — in-process or
-from another connection/process — forces a fresh full pass. The memo cannot hide
-tampering performed through SQLite (tests cover in-process UPDATE/DELETE and an
-out-of-band write from a second connection). It does not protect against someone editing
-the database file's bytes behind a running process's back, nor does it reduce the cost
-while the ledger is being written to continuously: under constant write load every
-`/ledger` call still pays a full pass. Incremental/checkpointed verification would be the
-next step and is not implemented.
+**Verification cost, the memo, and cooperative verification.** A full chain verification
+is O(entries) with an Ed25519 verify per entry (~160µs/entry, measured: ~2.1s at ~10,800
+entries on the reference machine). Run synchronously it blocks the whole event loop, and the
+load test (`scripts/loadtest.mjs`, [LOAD_TESTING.md](LOAD_TESTING.md)) showed the consequence:
+with continuous writes every `/ledger` read cost 2.4–3.7s **and** writers' p95 latency rose
+from ~0.5s to 2.5–3.2s — a cheap resource-amplification path for any authenticated principal,
+because the chain is global across tenants. Two measures, neither of which weakens detection:
+1. The result is memoized against a whole-database change token (`PRAGMA data_version` +
+   `total_changes()`), so repeated reads of an *unchanged* database are free while **any** write
+   — in-process or from another connection/process — forces a fresh full pass.
+2. `GET /ledger` uses `verifyChainAsync()`: the *identical* whole-chain verification (the same
+   per-row check as the synchronous one, so verdicts cannot diverge) that yields to the event
+   loop between 200-row batches and shares one in-flight pass between concurrent callers. The
+   rows examined are those present when the pass starts; a write that lands mid-pass
+   invalidates the memo so the next call verifies again.
+Measured effect at ~10,800 entries with 10 concurrent writers: write throughput 9.6 → 93 req/s,
+writer p95 2.5s → 0.19s. The price is that the *read* is slower while writes continue (≈4.8s),
+because it now shares the CPU instead of monopolising it. The memo and the async path cannot
+hide tampering performed through SQLite (tests cover in-process UPDATE/DELETE, a forged
+signature, and an out-of-band write from a second connection, in both variants). They do not
+protect against someone editing the database file's bytes behind a running process's back.
+**Not implemented:** incremental/checkpointed verification — it would make each read cheaper
+but would verify old rows less often, i.e. weaken detection unless paired with a scheduled
+full pass. Practical guidance: do not poll `/ledger` at high frequency on a large, busy ledger.
 
 This is honestly described as **tamper-evident**, not "blockchain" and not
 "trustless" — there is a single ledger signing key held by the running process
@@ -278,6 +290,7 @@ by itself, grant custody of funds.
 - **Demo mode's risk judgment is not AI evaluation.** Every escalation reproducible
   without external credentials comes from the disclosed deterministic baseline checks,
   never from a live model call.
-- **Not production-ready.** This is a from-scratch technical demonstration — it has not
-  been load-tested at real scale, integrated with a real agent framework, or exposed to
-  real users or real money.
+- **Not production-ready for real money.** Correctness under concurrency has been load-tested
+  at the scale of one developer machine (see [LOAD_TESTING.md](LOAD_TESTING.md)); it has not been
+  tested at production volume or soak duration, penetration-tested, integrated with a real agent
+  framework, run against live AI/payment credentials, or exposed to real users or real money.

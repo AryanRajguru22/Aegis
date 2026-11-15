@@ -322,7 +322,7 @@ and `/healthz` health check. Set the two key variables in the Render dashboard a
 
 ### What has and has not been verified
 
-Verified locally: the Docker image builds; a container starts in demo mode, reports healthy,
+Recorded from an earlier session (the final hardening pass could **not** re-run Docker: the Docker Desktop engine would not start on the Windows machine, so the image build, container run and `SIGTERM` exit were not re-verified — the same checks run in CI's `docker` job; see `docs/FINAL_RELEASE_READINESS_REPORT.md`): the Docker image builds; a container starts in demo mode, reports healthy,
 keeps its data across `docker stop` / `docker start` (restart reuses the same ledger and
 records the policy epoch only once), and exits 0 on `SIGTERM`; the dashboard works under the
 CSP; the full export → independent-verifier flow returns "TRUSTED" (exit 0) on a fresh
@@ -345,15 +345,16 @@ any run with real Anthropic/Gemini/Stripe credentials.
 
 ## Test status
 
-**756 tests passing** — 668 in the main Aegis suite (including dedicated dashboard
+**815 tests passing** — 723 in the main Aegis suite (including dedicated dashboard
 tests covering the Authority Flow view, the pipeline trace, XSS-safety of every value
 rendered from server responses, offline coverage for both the Anthropic and Gemini
-risk-judge providers, and the provider-aware judge-timeout configuration), 88 in the
-verifier's own suite. (One intermittent failure of an unrelated capability test was seen once under full-suite load and did not reproduce in 6 isolated runs; it is not yet root-caused.) Reproduce with:
+risk-judge providers, and the provider-aware judge-timeout configuration), 92 in the
+verifier's own suite. (A formerly intermittent capability test was root-caused — an authorizer query ran under the engine's ~1 ms default limit — and fixed; see `docs/TESTING.md`.) Reproduce with:
 
 ```bash
-npm test              # main suite (668)
-npm run test:verifier # verifier suite (88)
+npm test              # main suite (723)
+npm run test:verifier # verifier suite (92)
+npm run loadtest      # load + concurrency invariants (docs/LOAD_TESTING.md)
 ```
 
 ## What's provable live in Demo Mode vs. what requires external credentials
@@ -409,9 +410,11 @@ npm run test:verifier # verifier suite (88)
   [`verifier/README.md`](verifier/README.md) for the full explanation.
 - **Hardened, but not proven at scale.** Security headers, health checks, rate-limited
   sign-up, graceful shutdown and a Docker image are in place and verified locally (see
-  **Deployment**), but it has not been load-tested at real scale, run against live AI or
-  payment credentials, deployed to a public URL, integrated with a real agent framework,
-  or used by real users. It is a single-instance SQLite service.
+  **Deployment**) and a repeatable load test exists (`npm run loadtest`, results in
+  [`docs/LOAD_TESTING.md`](docs/LOAD_TESTING.md)), but it has not been tested at production
+  volume or soak duration, penetration-tested, run against live AI or payment credentials,
+  deployed to a public URL, integrated with a real agent framework, or used by real users.
+  It is a single-instance SQLite service.
 
 ## Repository structure
 
