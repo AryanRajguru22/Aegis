@@ -12,6 +12,8 @@ import {
   SignatureAlgorithm,
   Biscuit,
   AuthorizerBuilder,
+  type Authorizer,
+  type Rule,
 } from "@biscuit-auth/biscuit-wasm";
 
 let ready = false;
@@ -29,6 +31,18 @@ export const AUTHORIZE_LIMITS = {
   max_iterations: 1000,
   max_time_micro: 5_000_000,
 };
+
+/**
+ * Runs a query with the SAME explicit limits as every authorization run.
+ * `Authorizer.query()` (no limits argument) uses the engine's built-in defaults, which
+ * include a ~1ms wall-clock budget: under CPU contention (a loaded CI runner, parallel
+ * test files) it intermittently threw `{ RunLimit: 'Timeout' }` even for a trivial query.
+ * That was the root cause of a flaky extractRootFacts test (reproduced: 5 failures in 160
+ * runs with 8 parallel workers). Always go through this helper, never `authorizer.query`.
+ */
+export function queryWithAuthorizeLimits(authorizer: Pick<Authorizer, "queryWithLimits">, rule: Rule): Array<{ terms(): unknown[] }> {
+  return authorizer.queryWithLimits(rule, AUTHORIZE_LIMITS) as Array<{ terms(): unknown[] }>;
+}
 
 export function ensureWarm(): void {
   if (warmed) return;

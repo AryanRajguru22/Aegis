@@ -7,7 +7,7 @@ import {
   type PrivateKey,
   type PublicKey,
 } from "@biscuit-auth/biscuit-wasm";
-import { AUTHORIZE_LIMITS, ensureWasmReady } from "./wasm.js";
+import { AUTHORIZE_LIMITS, ensureWasmReady, queryWithAuthorizeLimits } from "./wasm.js";
 import { assertValidIdentifier, buildCaveatChecks, escapeDatalogString, validateAttenuation } from "./caveats.js";
 import type { AttenuateInput, IssueRootTokenInput } from "./types.js";
 
@@ -127,7 +127,7 @@ export function extractRootFacts(tokenBase64: string, rootPublicKey: PublicKey):
 }
 
 function queryScalarString(authorizer: Authorizer, factName: string): string | undefined {
-  const results = authorizer.query(Rule.fromString(`out($x) <- ${factName}($x)`));
+  const results = queryWithAuthorizeLimits(authorizer, Rule.fromString(`out($x) <- ${factName}($x)`));
   const first = results[0];
   if (!first) return undefined;
   const value = first.terms()[0];
